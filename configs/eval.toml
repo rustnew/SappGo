@@ -1,0 +1,5 @@
+model_path   = "assets/robot_humanoid_load.xml"
+policy_path  = "checkpoints/sapggo_final.bin"
+n_episodes   = 20
+render       = true
+seed         = 100

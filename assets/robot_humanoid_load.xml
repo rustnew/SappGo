@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="sapggo_humanoid">
+
+  <compiler angle="radian" coordinate="local" inertiafromgeom="true"/>
+
+  <option
+    timestep   = "0.002"
+    integrator = "RK4"
+    gravity    = "0 0 -9.81"
+    cone       = "elliptic"
+    iterations = "50"
+    solver     = "Newton"/>
+
+  <!-- ASSETS -->
+  <asset>
+    <texture name="ground_tex" type="2d" builtin="checker"
+             rgb1="0.22 0.22 0.22" rgb2="0.35 0.35 0.35"
+             width="512" height="512"/>
+    <material name="ground_mat" texture="ground_tex"
+              texrepeat="5 5" reflectance="0.1"/>
+    <texture name="sky" type="skybox" builtin="gradient"
+             rgb1="0.3 0.5 0.7" rgb2="0.0 0.0 0.0"
+             width="512" height="512"/>
+    <hfield name="terrain" file="terrain_flat.png"
+            nrow="100" ncol="100" size="20 20 0.5 0.1"/>
+    <material name="robot_body" rgba="0.7 0.7 0.7 1"
+              specular="0.5" shininess="0.4"/>
+    <material name="load_mat" rgba="0.8 0.3 0.1 1"
+              specular="0.2" shininess="0.1"/>
+  </asset>
+
+  <!-- DEFAULTS -->
+  <default>
+    <joint limited="true" damping="0.1" stiffness="0" armature="0.01"/>
+    <geom  contype="1" conaffinity="1" condim="3"
+           friction="0.8 0.005 0.001" density="1000"/>
+    <motor ctrllimited="true" ctrlrange="-1 1"/>
+  </default>
+
+  <!-- VISUAL -->
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0.0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+  </visual>
+
+  <!-- WORLD -->
+  <worldbody>
+
+    <light name="sun" directional="true" castshadow="true"
+           pos="1 -1 1.5" dir="-1 1 -1"
+           diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2"/>
+
+    <geom name="floor" type="hfield" hfield="terrain"
+          pos="0 0 0" material="ground_mat"/>
+
+    <body name="torso" pos="0 0 1.35">
+      <freejoint name="root"/>
+      <inertial pos="0 0 0" mass="10.0"
+                fullinertia="0.1 0.1 0.05 0 0 0"/>
+      <geom type="capsule" size="0.07 0.25" material="robot_body"/>
+      <site name="torso_imu" pos="0 0 0" size="0.01"/>
+
+      <!-- TORSO JOINTS -->
+      <joint name="torso_flex" type="hinge" axis="1 0 0"
+             range="-0.5 0.5" damping="2.0"/>
+      <joint name="torso_lat" type="hinge" axis="0 1 0"
+             range="-0.3 0.3" damping="2.0"/>
+
+      <!-- NECK -->
+      <body name="neck" pos="0 0 0.27">
+        <joint name="neck_tilt" type="hinge" axis="1 0 0"
+               range="-0.4 0.4"/>
+        <joint name="neck_rot"  type="hinge" axis="0 0 1"
+               range="-0.6 0.6"/>
+        <inertial pos="0 0 0" mass="1.5"
+                  fullinertia="0.01 0.01 0.008 0 0 0"/>
+        <geom type="capsule" size="0.03 0.07" material="robot_body"/>
+
+        <!-- HEAD -->
+        <body name="head" pos="0 0 0.10">
+          <inertial pos="0 0 0" mass="4.5"
+                    fullinertia="0.04 0.04 0.03 0 0 0"/>
+          <geom name="head_sphere" type="sphere" size="0.11"
+                material="robot_body"/>
+          <!-- Contact surface for the load -->
+          <geom name="head_top" type="sphere" size="0.06"
+                pos="0 0 0.10" material="robot_body"
+                friction="0.9 0.005 0.001"/>
+          <site name="head_imu" pos="0 0 0.11" size="0.01"/>
+
+          <!-- LOAD: free body resting on head -->
+          <body name="load" pos="0 0 0.22">
+            <freejoint name="load_joint" damping="0.05"/>
+            <inertial pos="0 0 0" mass="5.0"
+                      fullinertia="0.015 0.015 0.012 0 0 0"/>
+            <geom name="load_geom" type="box"
+                  size="0.15 0.15 0.10"
+                  material="load_mat"
+                  friction="0.8 0.005 0.001"
+                  condim="6"/>
+            <site name="load_imu" pos="0 0 0" size="0.01"/>
+          </body>
+
+        </body> <!-- head -->
+      </body> <!-- neck -->
+
+      <!-- LEFT LEG -->
+      <body name="upper_leg_L" pos="-0.09 0 -0.22">
+        <joint name="hip_flex_L" type="hinge" axis="1 0 0"
+               range="-0.7 1.2" damping="0.5"/>
+        <joint name="hip_add_L"  type="hinge" axis="0 0 1"
+               range="-0.5 0.5" damping="0.3"/>
+        <joint name="hip_rot_L"  type="hinge" axis="0 1 0"
+               range="-0.5 0.5" damping="0.3"/>
+        <inertial pos="0 0 -0.2" mass="7.0"
+                  fullinertia="0.08 0.08 0.02 0 0 0"/>
+        <geom type="capsule" size="0.05 0.2" pos="0 0 -0.2"
+              material="robot_body"/>
+        <body name="lower_leg_L" pos="0 0 -0.42">
+          <joint name="knee_L" type="hinge" axis="1 0 0"
+                 range="-1.8 0.0" damping="0.5"/>
+          <inertial pos="0 0 -0.18" mass="4.5"
+                    fullinertia="0.05 0.05 0.01 0 0 0"/>
+          <geom type="capsule" size="0.04 0.18" pos="0 0 -0.18"
+                material="robot_body"/>
+          <body name="foot_L" pos="0 0 -0.38">
+            <joint name="ankle_flex_L" type="hinge" axis="1 0 0"
+                   range="-0.7 0.5" damping="0.3"/>
+            <joint name="ankle_inv_L"  type="hinge" axis="0 0 1"
+                   range="-0.4 0.4" damping="0.2"/>
+            <inertial pos="0.04 0 -0.02" mass="1.5"
+                      fullinertia="0.003 0.012 0.01 0 0 0"/>
+            <geom name="foot_L" type="box"
+                  size="0.10 0.05 0.02" pos="0.04 0 -0.02"
+                  material="robot_body" condim="6"/>
+            <site name="foot_L_contact" pos="0.04 0 -0.04"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- RIGHT LEG (mirror) -->
+      <body name="upper_leg_R" pos="0.09 0 -0.22">
+        <joint name="hip_flex_R" type="hinge" axis="1 0 0"
+               range="-0.7 1.2" damping="0.5"/>
+        <joint name="hip_add_R"  type="hinge" axis="0 0 1"
+               range="-0.5 0.5" damping="0.3"/>
+        <joint name="hip_rot_R"  type="hinge" axis="0 1 0"
+               range="-0.5 0.5" damping="0.3"/>
+        <inertial pos="0 0 -0.2" mass="7.0"
+                  fullinertia="0.08 0.08 0.02 0 0 0"/>
+        <geom type="capsule" size="0.05 0.2" pos="0 0 -0.2"
+              material="robot_body"/>
+        <body name="lower_leg_R" pos="0 0 -0.42">
+          <joint name="knee_R" type="hinge" axis="1 0 0"
+                 range="-1.8 0.0" damping="0.5"/>
+          <inertial pos="0 0 -0.18" mass="4.5"
+                    fullinertia="0.05 0.05 0.01 0 0 0"/>
+          <geom type="capsule" size="0.04 0.18" pos="0 0 -0.18"
+                material="robot_body"/>
+          <body name="foot_R" pos="0 0 -0.38">
+            <joint name="ankle_flex_R" type="hinge" axis="1 0 0"
+                   range="-0.7 0.5" damping="0.3"/>
+            <joint name="ankle_inv_R"  type="hinge" axis="0 0 1"
+                   range="-0.4 0.4" damping="0.2"/>
+            <inertial pos="0.04 0 -0.02" mass="1.5"
+                      fullinertia="0.003 0.012 0.01 0 0 0"/>
+            <geom name="foot_R" type="box"
+                  size="0.10 0.05 0.02" pos="0.04 0 -0.02"
+                  material="robot_body" condim="6"/>
+            <site name="foot_R_contact" pos="0.04 0 -0.04"/>
+          </body>
+        </body>
+      </body>
+
+    </body> <!-- torso -->
+  </worldbody>
+
+  <!-- SENSORS -->
+  <sensor>
+    <framequat     name="torso_quat"  objtype="body" objname="torso"/>
+    <gyro          name="torso_gyro"  site="torso_imu"/>
+    <accelerometer name="torso_acc"   site="torso_imu"/>
+    <framequat     name="head_quat"   objtype="body" objname="head"/>
+    <framepos      name="load_pos"    objtype="body" objname="load"/>
+    <framequat     name="load_quat"   objtype="body" objname="load"/>
+    <gyro          name="load_gyro"   site="load_imu"/>
+    <accelerometer name="load_acc"    site="load_imu"/>
+    <force         name="foot_L_force" site="foot_L_contact"/>
+    <force         name="foot_R_force" site="foot_R_contact"/>
+  </sensor>
+
+  <!-- ACTUATORS -->
+  <actuator>
+    <motor name="hip_flex_L"   joint="hip_flex_L"   gear="150"/>
+    <motor name="hip_add_L"    joint="hip_add_L"    gear="150"/>
+    <motor name="hip_rot_L"    joint="hip_rot_L"    gear="150"/>
+    <motor name="knee_L"       joint="knee_L"       gear="200"/>
+    <motor name="ankle_flex_L" joint="ankle_flex_L" gear="80"/>
+    <motor name="ankle_inv_L"  joint="ankle_inv_L"  gear="80"/>
+    <motor name="hip_flex_R"   joint="hip_flex_R"   gear="150"/>
+    <motor name="hip_add_R"    joint="hip_add_R"    gear="150"/>
+    <motor name="hip_rot_R"    joint="hip_rot_R"    gear="150"/>
+    <motor name="knee_R"       joint="knee_R"       gear="200"/>
+    <motor name="ankle_flex_R" joint="ankle_flex_R" gear="80"/>
+    <motor name="ankle_inv_R"  joint="ankle_inv_R"  gear="80"/>
+    <motor name="torso_flex"   joint="torso_flex"   gear="120"/>
+    <motor name="torso_lat"    joint="torso_lat"    gear="120"/>
+    <motor name="neck_tilt"    joint="neck_tilt"    gear="40"/>
+    <motor name="neck_rot"     joint="neck_rot"     gear="40"/>
+  </actuator>
+
+</mujoco>

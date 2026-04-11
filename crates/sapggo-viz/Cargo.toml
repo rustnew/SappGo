@@ -1,0 +1,15 @@
+[package]
+name    = "sapggo-viz"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+mujoco-rs = { workspace = true, optional = true }
+tracing   = { workspace = true }
+anyhow    = { workspace = true }
+
+[features]
+default = []
+mujoco  = ["dep:mujoco-rs"]

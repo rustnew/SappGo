@@ -1,0 +1,25 @@
+[package]
+name    = "sapggo-train"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sapggo-train"
+path = "src/main.rs"
+
+[dependencies]
+sapggo-env        = { path = "../sapggo-env" }
+sapggo-agent      = { path = "../sapggo-agent" }
+sapggo-curriculum = { path = "../sapggo-curriculum" }
+sapggo-viz        = { path = "../sapggo-viz" }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+toml              = { workspace = true }
+tracing           = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap              = { workspace = true }
+rand              = { workspace = true }
+anyhow            = { workspace = true }
+ndarray           = { workspace = true }

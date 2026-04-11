@@ -1,0 +1,21 @@
+[package]
+name    = "sapggo-agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+rand       = { workspace = true }
+rand_distr = { workspace = true }
+serde      = { workspace = true }
+tracing    = { workspace = true }
+anyhow     = { workspace = true }
+thiserror  = { workspace = true }
+ndarray    = { workspace = true }
+
+[features]
+default = []
+# Enable burn-based neural network backends (heavy dependency).
+# When disabled, the crate provides trait-based abstractions with a simple MLP fallback.
+burn-backend = []

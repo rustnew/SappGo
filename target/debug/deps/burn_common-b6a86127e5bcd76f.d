@@ -1,0 +1,10 @@
+/home/fossouomartial/SappGo/target/debug/deps/burn_common-b6a86127e5bcd76f.d: /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/lib.rs /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/id.rs /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/rand.rs /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/stub.rs /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/benchmark.rs /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/reader.rs
+
+/home/fossouomartial/SappGo/target/debug/deps/libburn_common-b6a86127e5bcd76f.rmeta: /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/lib.rs /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/id.rs /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/rand.rs /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/stub.rs /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/benchmark.rs /home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/reader.rs
+
+/home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/lib.rs:
+/home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/id.rs:
+/home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/rand.rs:
+/home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/stub.rs:
+/home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/benchmark.rs:
+/home/fossouomartial/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-common-0.13.2/src/reader.rs:
