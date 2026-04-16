@@ -21,8 +21,6 @@
     <texture name="sky" type="skybox" builtin="gradient"
              rgb1="0.3 0.5 0.7" rgb2="0.0 0.0 0.0"
              width="512" height="512"/>
-    <hfield name="terrain" file="terrain_flat.png"
-            nrow="100" ncol="100" size="20 20 0.5 0.1"/>
     <material name="robot_body" rgba="0.7 0.7 0.7 1"
               specular="0.5" shininess="0.4"/>
     <material name="load_mat" rgba="0.8 0.3 0.1 1"
@@ -39,7 +37,7 @@
 
   <!-- VISUAL -->
   <visual>
-    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0.0"/>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0.0 0.0 0.0"/>
     <rgba haze="0.15 0.25 0.35 1"/>
   </visual>
 
@@ -50,59 +48,50 @@
            pos="1 -1 1.5" dir="-1 1 -1"
            diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2"/>
 
-    <geom name="floor" type="hfield" hfield="terrain"
-          pos="0 0 0" material="ground_mat"/>
+    <geom name="floor" type="plane" size="50 50 0.1" material="ground_mat"/>
 
-    <body name="torso" pos="0 0 1.35">
+    <!-- ROOT: floating base (freejoint = 6 DOF) -->
+    <body name="root_body" pos="0 0 1.35">
       <freejoint name="root"/>
-      <inertial pos="0 0 0" mass="10.0"
-                fullinertia="0.1 0.1 0.05 0 0 0"/>
-      <geom type="capsule" size="0.07 0.25" material="robot_body"/>
-      <site name="torso_imu" pos="0 0 0" size="0.01"/>
+      <inertial pos="0 0 0" mass="0.01"
+                fullinertia="0.0001 0.0001 0.0001 0 0 0"/>
 
-      <!-- TORSO JOINTS -->
-      <joint name="torso_flex" type="hinge" axis="1 0 0"
-             range="-0.5 0.5" damping="2.0"/>
-      <joint name="torso_lat" type="hinge" axis="0 1 0"
-             range="-0.3 0.3" damping="2.0"/>
+      <!-- TORSO: articulated upper body (2 hinge DOFs) -->
+      <body name="torso" pos="0 0 0">
+        <joint name="torso_flex" type="hinge" axis="1 0 0"
+               range="-0.5 0.5" damping="2.0"/>
+        <joint name="torso_lat" type="hinge" axis="0 1 0"
+               range="-0.3 0.3" damping="2.0"/>
+        <inertial pos="0 0 0" mass="10.0"
+                  fullinertia="0.1 0.1 0.05 0 0 0"/>
+        <geom type="capsule" size="0.07 0.25" material="robot_body"/>
+        <site name="torso_imu" pos="0 0 0" size="0.01"/>
 
-      <!-- NECK -->
-      <body name="neck" pos="0 0 0.27">
-        <joint name="neck_tilt" type="hinge" axis="1 0 0"
-               range="-0.4 0.4"/>
-        <joint name="neck_rot"  type="hinge" axis="0 0 1"
-               range="-0.6 0.6"/>
-        <inertial pos="0 0 0" mass="1.5"
-                  fullinertia="0.01 0.01 0.008 0 0 0"/>
-        <geom type="capsule" size="0.03 0.07" material="robot_body"/>
+        <!-- NECK -->
+        <body name="neck" pos="0 0 0.27">
+          <joint name="neck_tilt" type="hinge" axis="1 0 0"
+                 range="-0.4 0.4"/>
+          <joint name="neck_rot"  type="hinge" axis="0 0 1"
+                 range="-0.6 0.6"/>
+          <inertial pos="0 0 0" mass="1.5"
+                    fullinertia="0.01 0.01 0.008 0 0 0"/>
+          <geom type="capsule" size="0.03 0.07" material="robot_body"/>
 
-        <!-- HEAD -->
-        <body name="head" pos="0 0 0.10">
-          <inertial pos="0 0 0" mass="4.5"
-                    fullinertia="0.04 0.04 0.03 0 0 0"/>
-          <geom name="head_sphere" type="sphere" size="0.11"
-                material="robot_body"/>
-          <!-- Contact surface for the load -->
-          <geom name="head_top" type="sphere" size="0.06"
-                pos="0 0 0.10" material="robot_body"
-                friction="0.9 0.005 0.001"/>
-          <site name="head_imu" pos="0 0 0.11" size="0.01"/>
+          <!-- HEAD -->
+          <body name="head" pos="0 0 0.10">
+            <inertial pos="0 0 0" mass="4.5"
+                      fullinertia="0.04 0.04 0.03 0 0 0"/>
+            <geom name="head_sphere" type="sphere" size="0.11"
+                  material="robot_body"/>
+            <!-- Contact surface for the load -->
+            <geom name="head_top" type="sphere" size="0.06"
+                  pos="0 0 0.10" material="robot_body"
+                  friction="0.9 0.005 0.001"/>
+            <site name="head_imu" pos="0 0 0.11" size="0.01"/>
 
-          <!-- LOAD: free body resting on head -->
-          <body name="load" pos="0 0 0.22">
-            <freejoint name="load_joint" damping="0.05"/>
-            <inertial pos="0 0 0" mass="5.0"
-                      fullinertia="0.015 0.015 0.012 0 0 0"/>
-            <geom name="load_geom" type="box"
-                  size="0.15 0.15 0.10"
-                  material="load_mat"
-                  friction="0.8 0.005 0.001"
-                  condim="6"/>
-            <site name="load_imu" pos="0 0 0" size="0.01"/>
-          </body>
-
-        </body> <!-- head -->
-      </body> <!-- neck -->
+          </body> <!-- head -->
+        </body> <!-- neck -->
+      </body> <!-- torso -->
 
       <!-- LEFT LEG -->
       <body name="upper_leg_L" pos="-0.09 0 -0.22">
@@ -172,7 +161,21 @@
         </body>
       </body>
 
-    </body> <!-- torso -->
+    </body> <!-- root_body -->
+
+    <!-- LOAD: free body placed above the head at init (top-level for MuJoCo 3.x) -->
+    <body name="load" pos="0 0 1.94">
+      <freejoint name="load_joint"/>
+      <inertial pos="0 0 0" mass="5.0"
+                fullinertia="0.015 0.015 0.012 0 0 0"/>
+      <geom name="load_geom" type="box"
+            size="0.15 0.15 0.10"
+            material="load_mat"
+            friction="0.8 0.005 0.001"
+            condim="6"/>
+      <site name="load_imu" pos="0 0 0" size="0.01"/>
+    </body>
+
   </worldbody>
 
   <!-- SENSORS -->

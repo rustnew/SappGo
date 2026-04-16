@@ -384,6 +384,7 @@ dependencies = [
  "num-integer",
  "num-traits",
  "rawpointer",
+ "serde",
 ]
 
 [[package]]
@@ -692,6 +693,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "mujoco-rs",
  "ndarray",
  "rand",
  "sapggo-agent",

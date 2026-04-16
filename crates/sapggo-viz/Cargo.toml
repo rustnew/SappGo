@@ -5,6 +5,11 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "sapggo-viewer"
+path = "src/bin/viewer.rs"
+required-features = ["mujoco"]
+
 [dependencies]
 mujoco-rs = { workspace = true, optional = true }
 tracing   = { workspace = true }

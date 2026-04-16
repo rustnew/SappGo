@@ -8,7 +8,6 @@
 use std::path::Path;
 
 use crate::error::{EnvError, EnvResult};
-use crate::robot::N_JOINTS;
 
 // ═══════════════════════════════════════════════════════════════════════
 //  REAL MuJoCo backend (feature = "mujoco")
@@ -46,7 +45,7 @@ mod backend {
                 let msg = c_chars_to_string(&err_buf);
                 return Err(EnvError::ModelLoad { path: path_str.to_owned(), source: anyhow::anyhow!("{}", msg) });
             }
-            let data_ptr = unsafe { mj_makeData(model_ptr.as_ref().unwrap()) };
+            let data_ptr = unsafe { mj_makeData(model_ptr) };
             if data_ptr.is_null() {
                 unsafe { mj_deleteModel(model_ptr); }
                 return Err(EnvError::ModelLoad { path: path_str.to_owned(), source: anyhow::anyhow!("mj_makeData returned null") });
@@ -54,14 +53,27 @@ mod backend {
             Ok(Self { model_ptr, data_ptr })
         }
 
-        #[inline] fn model(&self) -> &mjModel { unsafe { &*self.model_ptr } }
-        #[inline] fn data(&self) -> &mjData   { unsafe { &*self.data_ptr } }
-        #[inline] fn data_mut(&mut self) -> &mut mjData { unsafe { &mut *self.data_ptr } }
+        #[inline] fn m(&self) -> *const mjModel { self.model_ptr as *const mjModel }
+        #[inline] fn d(&self) -> *const mjData   { self.data_ptr as *const mjData }
+        #[inline] fn d_mut(&mut self) -> *mut mjData { self.data_ptr }
 
-        pub fn reset_data(&mut self) { unsafe { mj_resetData(self.model(), self.data_mut()); } }
-        pub fn step(&mut self)       { unsafe { mj_step(self.model(), self.data_mut()); } }
-        pub fn forward(&mut self)    { unsafe { mj_forward(self.model(), self.data_mut()); } }
+        pub fn reset_data(&mut self) { unsafe { mj_resetData(self.m(), self.d_mut()); } }
+        pub fn step(&mut self) { unsafe { mj_step(self.m(), self.d_mut()); } }
+        pub fn forward(&mut self) { unsafe { mj_forward(self.m(), self.d_mut()); } }
 
+        pub fn nbody(&self) -> usize { unsafe { (*self.m()).nbody as usize } }
+        pub fn njnt(&self) -> usize { unsafe { (*self.m()).njnt as usize } }
+        pub fn nq(&self) -> usize { unsafe { (*self.m()).nq as usize } }
+        pub fn nv(&self) -> usize { unsafe { (*self.m()).nv as usize } }
+
+        /// Full qpos array (generalized positions).
+        pub fn qpos_slice(&self) -> &[f64] {
+            unsafe { std::slice::from_raw_parts((*self.d()).qpos, self.nq()) }
+        }
+        /// Full qvel array (generalized velocities).
+        pub fn qvel_slice(&self) -> &[f64] {
+            unsafe { std::slice::from_raw_parts((*self.d()).qvel, self.nv()) }
+        }
         pub fn body_id(&self, name: &str) -> Option<usize>     { self.name2id(mjtObj::mjOBJ_BODY, name) }
         pub fn joint_id(&self, name: &str) -> Option<usize>    { self.name2id(mjtObj::mjOBJ_JOINT, name) }
         pub fn sensor_id(&self, name: &str) -> Option<usize>   { self.name2id(mjtObj::mjOBJ_SENSOR, name) }
@@ -69,24 +81,24 @@ mod backend {
 
         fn name2id(&self, obj_type: mjtObj, name: &str) -> Option<usize> {
             let c_name = CString::new(name).ok()?;
-            let id = unsafe { mj_name2id(self.model(), obj_type as i32, c_name.as_ptr()) };
+            let id = unsafe { mj_name2id(self.m(), obj_type as i32, c_name.as_ptr()) };
             if id < 0 { None } else { Some(id as usize) }
         }
 
-        #[inline] pub fn joint_qpos_addr(&self, jid: usize) -> usize { unsafe { *self.model().jnt_qposadr.add(jid) as usize } }
-        #[inline] pub fn joint_qvel_addr(&self, jid: usize) -> usize { unsafe { *self.model().jnt_dofadr.add(jid) as usize } }
-        #[inline] pub fn sensor_addr(&self, sid: usize) -> usize     { unsafe { *self.model().sensor_adr.add(sid) as usize } }
+        #[inline] pub fn joint_qpos_addr(&self, jid: usize) -> usize { unsafe { *(*self.m()).jnt_qposadr.add(jid) as usize } }
+        #[inline] pub fn joint_qvel_addr(&self, jid: usize) -> usize { unsafe { *(*self.m()).jnt_dofadr.add(jid) as usize } }
+        #[inline] pub fn sensor_addr(&self, sid: usize) -> usize     { unsafe { *(*self.m()).sensor_adr.add(sid) as usize } }
 
-        #[inline] pub fn qpos(&self, a: usize) -> f64              { unsafe { *self.data().qpos.add(a) } }
-        #[inline] pub fn set_qpos(&mut self, a: usize, v: f64)     { unsafe { *self.data_mut().qpos.add(a) = v; } }
-        #[inline] pub fn qvel(&self, a: usize) -> f64              { unsafe { *self.data().qvel.add(a) } }
-        #[inline] pub fn body_xpos(&self, bid: usize, c: usize) -> f64  { unsafe { *self.data().xpos.add(bid * 3 + c) } }
-        #[inline] pub fn body_xquat(&self, bid: usize, c: usize) -> f64 { unsafe { *self.data().xquat.add(bid * 4 + c) } }
-        #[inline] pub fn sensordata(&self, a: usize) -> f64        { unsafe { *self.data().sensordata.add(a) } }
-        #[inline] pub fn actuator_force(&self, i: usize) -> f64    { unsafe { *self.data().actuator_force.add(i) } }
-        #[inline] pub fn set_ctrl(&mut self, i: usize, v: f64)     { unsafe { *self.data_mut().ctrl.add(i) = v; } }
+        #[inline] pub fn qpos(&self, a: usize) -> f64              { unsafe { *(*self.d()).qpos.add(a) } }
+        #[inline] pub fn set_qpos(&mut self, a: usize, v: f64)     { unsafe { *(*self.d_mut()).qpos.add(a) = v; } }
+        #[inline] pub fn qvel(&self, a: usize) -> f64              { unsafe { *(*self.d()).qvel.add(a) } }
+        #[inline] pub fn body_xpos(&self, bid: usize, c: usize) -> f64  { unsafe { *(*self.d()).xpos.add(bid * 3 + c) } }
+        #[inline] pub fn body_xquat(&self, bid: usize, c: usize) -> f64 { unsafe { *(*self.d()).xquat.add(bid * 4 + c) } }
+        #[inline] pub fn sensordata(&self, a: usize) -> f64        { unsafe { *(*self.d()).sensordata.add(a) } }
+        #[inline] pub fn actuator_force(&self, i: usize) -> f64    { unsafe { *(*self.d()).actuator_force.add(i) } }
+        #[inline] pub fn set_ctrl(&mut self, i: usize, v: f64)     { unsafe { *(*self.d_mut()).ctrl.add(i) = v; } }
         #[inline] pub fn set_xfrc_applied(&mut self, bid: usize, c: usize, v: f64) {
-            unsafe { *self.data_mut().xfrc_applied.add(bid * 6 + c) = v; }
+            unsafe { *(*self.d_mut()).xfrc_applied.add(bid * 6 + c) = v; }
         }
     }
 
@@ -111,6 +123,7 @@ mod backend {
 #[cfg(not(feature = "mujoco"))]
 mod backend {
     use super::*;
+    use crate::robot::N_JOINTS;
 
     /// Maximum number of bodies / joints / sensors in the stub.
     const MAX_BODIES:  usize = 32;

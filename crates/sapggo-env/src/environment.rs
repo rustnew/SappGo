@@ -115,7 +115,6 @@ impl SapggoEnv {
     /// 5. Returns the initial observation.
     pub fn reset(&mut self) -> Array1<f64> {
         self.sim.reset_data();
-
         self.apply_domain_randomization();
         load::place_load_on_head(&mut self.sim, &self.idx, &mut self.rng);
 
@@ -240,6 +239,18 @@ impl SapggoEnv {
     fn robot_is_fallen(&self) -> bool {
         self.sim.body_xpos(self.idx.torso_body_id, 2) < 0.6
     }
+
+    /// Returns the simulation's qpos slice (for external visualization).
+    pub fn qpos_slice(&self) -> &[f64] { self.sim.qpos_slice() }
+
+    /// Returns the simulation's qvel slice (for external visualization).
+    pub fn qvel_slice(&self) -> &[f64] { self.sim.qvel_slice() }
+
+    /// Number of generalized positions.
+    pub fn nq(&self) -> usize { self.sim.nq() }
+
+    /// Number of generalized velocities.
+    pub fn nv(&self) -> usize { self.sim.nv() }
 
     /// Applies per-episode domain randomization based on curriculum parameters.
     fn apply_domain_randomization(&mut self) {

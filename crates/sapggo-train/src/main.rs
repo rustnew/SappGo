@@ -6,6 +6,7 @@ use tracing_subscriber::EnvFilter;
 
 mod checkpoint;
 mod config;
+mod episode_log;
 mod logger;
 mod trainer;
 

@@ -1,0 +1,5 @@
+[env]
+MUJOCO_DYNAMIC_LINK_LIB = { value = "/home/fossouomartial/.mujoco/mujoco3/lib", force = true }
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,-rpath,/home/fossouomartial/.mujoco/mujoco3/lib"]

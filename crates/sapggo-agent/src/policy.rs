@@ -1,6 +1,7 @@
 use ndarray::{Array1, Array2};
 use rand::Rng;
 use rand_distr::{Distribution, Normal};
+use serde::{Serialize, Deserialize};
 
 /// Trait for policies that can produce deterministic and stochastic actions.
 pub trait Policy {
@@ -12,7 +13,7 @@ pub trait Policy {
 }
 
 /// Dense linear layer: y = x * W^T + b
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinearLayer {
     pub weights: Array2<f64>,
     pub bias:    Array1<f64>,
@@ -33,6 +34,27 @@ impl LinearLayer {
     pub fn forward(&self, x: &Array1<f64>) -> Array1<f64> {
         self.weights.dot(x) + &self.bias
     }
+
+    /// SGD update: W -= lr * dL/dW, b -= lr * dL/db
+    ///
+    /// `d_out` is the gradient of the loss w.r.t. this layer's output [out_dim].
+    /// `input` is the input that was fed to this layer [in_dim].
+    ///
+    /// Returns the gradient w.r.t. the input [in_dim] for upstream backprop.
+    pub fn backward_sgd(&mut self, d_out: &Array1<f64>, input: &Array1<f64>, lr: f64) -> Array1<f64> {
+        // dL/dW = d_out ⊗ input  (outer product)
+        // dL/db = d_out
+        // dL/dinput = W^T · d_out
+        let d_input = self.weights.t().dot(d_out);
+        // SGD step
+        for i in 0..d_out.len() {
+            self.bias[i] -= lr * d_out[i];
+            for j in 0..input.len() {
+                self.weights[[i, j]] -= lr * d_out[i] * input[j];
+            }
+        }
+        d_input
+    }
 }
 
 /// Simple two-hidden-layer MLP actor (Gaussian policy).
@@ -42,12 +64,12 @@ impl LinearLayer {
 ///       → Linear(256, 256)     → Tanh
 ///       → mean: Linear(256, act_dim)
 ///       + log_std: learnable vector
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MlpActor {
     fc1:     LinearLayer,
     fc2:     LinearLayer,
     mean:    LinearLayer,
-    log_std: Array1<f64>,
+    pub log_std: Array1<f64>,
     act_dim: usize,
 }
 
@@ -71,6 +93,52 @@ impl MlpActor {
         let std  = self.log_std.mapv(|v| v.clamp(-4.0, 0.0).exp());
         (mean, std)
     }
+
+    /// Forward pass that also returns intermediate activations for backprop.
+    pub fn forward_with_cache(&self, obs: &Array1<f64>) -> ActorCache {
+        let z1  = self.fc1.forward(obs);
+        let h1  = z1.mapv(f64::tanh);
+        let z2  = self.fc2.forward(&h1);
+        let h2  = z2.mapv(f64::tanh);
+        let mean = self.mean.forward(&h2);
+        let std  = self.log_std.mapv(|v| v.clamp(-4.0, 0.0).exp());
+        ActorCache { obs: obs.clone(), h1, h2, mean, std }
+    }
+
+    /// Backprop through the actor given dL/d(mean) and dL/d(log_std).
+    pub fn backward_sgd(
+        &mut self,
+        cache: &ActorCache,
+        d_mean: &Array1<f64>,
+        d_log_std: &Array1<f64>,
+        lr: f64,
+    ) {
+        // Update log_std
+        for i in 0..self.act_dim {
+            if self.log_std[i] >= -4.0 && self.log_std[i] <= 0.0 {
+                self.log_std[i] -= lr * d_log_std[i];
+                self.log_std[i] = self.log_std[i].clamp(-4.0, 0.0);
+            }
+        }
+        // Backprop through mean layer → h2
+        let d_h2 = self.mean.backward_sgd(d_mean, &cache.h2, lr);
+        // tanh derivative: d_z2 = d_h2 * (1 - h2^2)
+        let d_z2 = &d_h2 * &cache.h2.mapv(|h| 1.0 - h * h);
+        // Backprop through fc2 → h1
+        let d_h1 = self.fc2.backward_sgd(&d_z2, &cache.h1, lr);
+        let d_z1 = &d_h1 * &cache.h1.mapv(|h| 1.0 - h * h);
+        // Backprop through fc1 (updates weights, gradient to input discarded)
+        let _ = self.fc1.backward_sgd(&d_z1, &cache.obs, lr);
+    }
+}
+
+/// Cached activations from an actor forward pass, used for backpropagation.
+pub struct ActorCache {
+    pub obs:  Array1<f64>,
+    pub h1:   Array1<f64>,
+    pub h2:   Array1<f64>,
+    pub mean: Array1<f64>,
+    pub std:  Array1<f64>,
 }
 
 impl Policy for MlpActor {
