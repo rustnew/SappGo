@@ -36,7 +36,7 @@ impl Default for RewardWeights {
             load_y: 1.0,
             load_z: 2.0,
             jerk:   0.05,
-            alive:  0.1,
+            alive:  1.0,
         }
     }
 }
@@ -89,4 +89,4 @@ pub const MILESTONE_BONUS: f64 = 25.0;
 pub const EPISODE_BONUS: f64 = 100.0;
 
 /// Penalty applied when the episode terminates due to failure.
-pub const TERMINATION_PENALTY: f64 = -50.0;
+pub const TERMINATION_PENALTY: f64 = -10.0;

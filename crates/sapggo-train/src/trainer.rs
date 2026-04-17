@@ -5,7 +5,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 use sapggo_agent::{
-    ActorCache, MlpActor, MlpCritic, Policy,
+    ActorGradBuffer, CriticGradBuffer, MlpActor, MlpCritic, Policy,
     PpoConfig, PpoUpdateStats, RolloutBuffer, RunningNormalizer, Transition,
     compute_gae, normalize_advantages,
 };
@@ -246,15 +246,14 @@ impl Trainer {
         Ok(buffer)
     }
 
-    /// PPO update with manual backpropagation through all network layers.
+    /// PPO update with batch gradient accumulation.
     ///
-    /// For each sample in the rollout:
-    ///   1. Forward pass through actor (with cache for backprop).
-    ///   2. Compute PPO clipped surrogate loss gradient w.r.t. mean and log_std.
-    ///   3. Backprop through actor layers with SGD.
-    ///   4. Forward+backward SGD on critic for value loss.
+    /// For each epoch:
+    ///   1. Accumulate gradients over the full rollout (no weight changes).
+    ///   2. Apply the mean gradient in one step with clipping.
     ///
-    /// Runs `ppo_epochs` passes over the data for stable learning.
+    /// This ensures the policy stays consistent within each epoch,
+    /// giving clean gradient estimates and stable learning.
     fn ppo_update(
         &mut self,
         rollout:    &RolloutBuffer,
@@ -267,107 +266,93 @@ impl Trainer {
             return PpoUpdateStats::default();
         }
 
-        let lr        = self.ppo_config.lr;
-        let clip_eps  = self.ppo_config.clip_epsilon;
-        let epochs    = self.ppo_config.epochs.max(1);
-        let nf        = n as f64;
+        let lr       = self.ppo_config.lr;
+        let clip_eps = self.ppo_config.clip_epsilon;
+        let epochs   = self.ppo_config.epochs.max(1);
+        let ent_coef = self.ppo_config.entropy_coef;
+        let nf       = n as f64;
 
-        let mut total_policy_loss = 0.0f64;
-        let mut total_value_loss  = 0.0f64;
-        let mut total_entropy     = 0.0f64;
-        let mut total_clip_frac   = 0.0f64;
-        let mut total_kl          = 0.0f64;
+        let mut actor_grad  = ActorGradBuffer::new(OBS_DIM, ACT_DIM);
+        let mut critic_grad = CriticGradBuffer::new(OBS_DIM);
+
+        let mut total_ploss = 0.0f64;
+        let mut total_vloss = 0.0f64;
+        let mut total_ent   = 0.0f64;
+        let mut total_clip  = 0.0f64;
+        let mut total_kl    = 0.0f64;
 
         for _epoch in 0..epochs {
-            let mut epoch_ploss = 0.0f64;
-            let mut epoch_vloss = 0.0f64;
-            let mut epoch_ent   = 0.0f64;
-            let mut epoch_clip  = 0.0f64;
-            let mut epoch_kl    = 0.0f64;
+            actor_grad.reset();
+            critic_grad.reset();
+            let (mut ep, mut ev, mut ee, mut ec, mut ek) = (0.0, 0.0, 0.0, 0.0, 0.0);
 
+            // ── Accumulate gradients over full rollout ──
             for i in 0..n {
                 let norm_obs = self.normalizer.normalize(&slices.observations[i]);
                 let obs_arr  = Array1::from(norm_obs);
                 let action   = &slices.actions[i];
 
-                // ── Actor forward with cache ──
                 let cache = self.actor.forward_with_cache(&obs_arr);
 
-                // Compute log_prob and entropy under current policy
-                let mut new_log_prob = 0.0f64;
-                let mut ent = 0.0f64;
+                let mut new_lp = 0.0f64;
+                let mut ent    = 0.0f64;
                 for j in 0..ACT_DIM {
                     let s = cache.std[j].max(1e-8);
                     let z = (action[j] - cache.mean[j]) / s;
-                    new_log_prob += -0.5 * z * z - s.ln()
+                    new_lp += -0.5 * z * z - s.ln()
                         - 0.5 * (2.0 * std::f64::consts::PI).ln();
                     ent += 0.5 * (2.0 * std::f64::consts::PI * std::f64::consts::E * s * s).ln();
                 }
 
-                // PPO ratio and clipped surrogate
-                let ratio = (new_log_prob - slices.log_probs[i]).exp();
+                let ratio   = (new_lp - slices.log_probs[i]).exp();
                 let clipped = ratio.clamp(1.0 - clip_eps, 1.0 + clip_eps);
-                let adv = advantages[i];
-                let surr1 = ratio * adv;
-                let surr2 = clipped * adv;
-                let use_clipped = surr2 < surr1;
-                epoch_ploss += -surr1.min(surr2);
-                epoch_clip  += if use_clipped { 1.0 } else { 0.0 };
-                epoch_kl    += slices.log_probs[i] - new_log_prob;
-                epoch_ent   += ent;
+                let adv     = advantages[i];
+                let surr1   = ratio * adv;
+                let surr2   = clipped * adv;
+                let is_clip = surr2 < surr1;
+                ep += -surr1.min(surr2);
+                ec += if is_clip { 1.0 } else { 0.0 };
+                ek += slices.log_probs[i] - new_lp;
+                ee += ent;
 
-                // ── Gradient of -min(surr1, surr2) w.r.t. log_prob ──
-                // d(-min(r*A, clip(r)*A))/d(log_prob)
-                // If not clipped: d/d(lp) = -ratio * adv  (since d(ratio)/d(lp) = ratio)
-                // If clipped: gradient is 0 (clipped ratio is constant w.r.t. params)
-                let d_log_prob = if !use_clipped {
-                    -ratio * adv / nf
-                } else {
-                    0.0
-                };
+                // Policy gradient (0 when clipped)
+                let d_lp = if !is_clip { -ratio * adv } else { 0.0 };
 
-                // ── Gradient of log_prob w.r.t. mean[j] and log_std[j] ──
-                // log_prob = Σ_j  -0.5 * z_j^2 - ln(s_j) - 0.5*ln(2π)
-                // where z_j = (a_j - μ_j) / s_j,  s_j = exp(log_std_j)
-                //
-                // d(lp)/d(μ_j) = z_j / s_j = (a_j - μ_j) / s_j^2
-                // d(lp)/d(log_std_j) = z_j^2 - 1   (since d(lp)/d(s_j) = z_j^2/s_j - 1/s_j, times s_j)
                 let mut d_mean    = Array1::zeros(ACT_DIM);
                 let mut d_log_std = Array1::zeros(ACT_DIM);
                 for j in 0..ACT_DIM {
                     let s = cache.std[j].max(1e-8);
                     let z = (action[j] - cache.mean[j]) / s;
-                    d_mean[j]    = d_log_prob * (z / s);
-                    d_log_std[j] = d_log_prob * (z * z - 1.0);
+                    d_mean[j]    = d_lp * (z / s);
+                    d_log_std[j] = d_lp * (z * z - 1.0);
+                    // Entropy bonus: maximize entropy → subtract gradient
+                    d_log_std[j] -= ent_coef;
                 }
 
-                // Add entropy bonus gradient: maximize entropy → d(-c*H)/d(log_std)
-                // d(ent)/d(log_std_j) = 1  (since ent_j = 0.5*ln(2πe*s²) = log_std + const)
-                let entropy_coef = 0.01;
-                for j in 0..ACT_DIM {
-                    d_log_std[j] -= entropy_coef / nf;
-                }
+                // Accumulate actor gradients (weights unchanged)
+                self.actor.accumulate_grad(&cache, &d_mean, &d_log_std, &mut actor_grad);
 
-                // ── Backprop through actor ──
-                self.actor.backward_sgd(&cache, &d_mean, &d_log_std, lr);
-
-                // ── Critic update (value loss) ──
-                let v = self.critic.update_sgd(&obs_arr, returns[i], lr / nf);
-                epoch_vloss += (v - returns[i]).powi(2);
+                // Accumulate critic gradients (weights unchanged)
+                let v = self.critic.accumulate_grad(&obs_arr, returns[i], &mut critic_grad);
+                ev += (v - returns[i]).powi(2);
             }
 
-            total_policy_loss = epoch_ploss / nf;
-            total_value_loss  = epoch_vloss / nf;
-            total_entropy     = epoch_ent / nf;
-            total_clip_frac   = epoch_clip / nf;
-            total_kl          = epoch_kl / nf;
+            // ── Apply accumulated gradients in one batch step ──
+            self.actor.apply_grad(&mut actor_grad, nf, lr);
+            self.critic.apply_grad(&mut critic_grad, nf, lr);
+
+            total_ploss = ep / nf;
+            total_vloss = ev / nf;
+            total_ent   = ee / nf;
+            total_clip  = ec / nf;
+            total_kl    = ek / nf;
         }
 
         PpoUpdateStats {
-            policy_loss: total_policy_loss,
-            value_loss:  total_value_loss,
-            entropy:     total_entropy,
-            clip_frac:   total_clip_frac,
+            policy_loss: total_ploss,
+            value_loss:  total_vloss,
+            entropy:     total_ent,
+            clip_frac:   total_clip,
             approx_kl:   total_kl,
         }
     }

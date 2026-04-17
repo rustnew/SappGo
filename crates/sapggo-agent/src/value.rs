@@ -2,7 +2,7 @@ use ndarray::Array1;
 use rand::Rng;
 use serde::{Serialize, Deserialize};
 
-use crate::policy::LinearLayer;
+use crate::policy::{CriticGradBuffer, LinearLayer};
 
 /// Simple two-hidden-layer MLP critic (value function).
 ///
@@ -58,5 +58,34 @@ impl MlpCritic {
         let _ = self.fc1.backward_sgd(&d_z1, obs, lr);
 
         v
+    }
+
+    /// Forward pass + accumulate gradient of MSE loss into buffer (no weight update).
+    /// Returns V(obs).
+    pub fn accumulate_grad(&self, obs: &Array1<f64>, target: f64, grad: &mut CriticGradBuffer) -> f64 {
+        let z1 = self.fc1.forward(obs);
+        let h1 = z1.mapv(f64::tanh);
+        let z2 = self.fc2.forward(&h1);
+        let h2 = z2.mapv(f64::tanh);
+        let v  = self.out.forward(&h2)[0];
+
+        let d_v = v - target;
+        let d_out_input = Array1::from(vec![d_v]);
+
+        let d_h2 = grad.out.accumulate(&d_out_input, &h2, &self.out.weights);
+        let d_z2 = &d_h2 * &h2.mapv(|h| 1.0 - h * h);
+        let d_h1 = grad.fc2.accumulate(&d_z2, &h1, &self.fc2.weights);
+        let d_z1 = &d_h1 * &h1.mapv(|h| 1.0 - h * h);
+        let _ = grad.fc1.accumulate(&d_z1, obs, &self.fc1.weights);
+
+        v
+    }
+
+    /// Apply accumulated gradients and zero the buffer.
+    pub fn apply_grad(&mut self, grad: &mut CriticGradBuffer, n: f64, lr: f64) {
+        self.out.apply_grad(&grad.out, n, lr);
+        self.fc2.apply_grad(&grad.fc2, n, lr);
+        self.fc1.apply_grad(&grad.fc1, n, lr);
+        grad.reset();
     }
 }

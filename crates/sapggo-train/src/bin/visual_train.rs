@@ -22,7 +22,7 @@ use mujoco_rs::prelude::MjModel;
 use mujoco_rs::viewer::MjViewer;
 
 use sapggo_agent::{
-    MlpActor, MlpCritic, Policy,
+    ActorGradBuffer, CriticGradBuffer, MlpActor, MlpCritic, Policy,
     PpoConfig, PpoUpdateStats, RolloutBuffer, RunningNormalizer, Transition,
     compute_gae, normalize_advantages,
 };
@@ -309,7 +309,7 @@ fn save_json<T: serde::Serialize>(data: &T, path: &Path) {
     }
 }
 
-/// PPO update with real backpropagation through all network layers.
+/// PPO update with batch gradient accumulation.
 fn ppo_update(
     actor: &mut MlpActor, critic: &mut MlpCritic, normalizer: &RunningNormalizer,
     rollout: &RolloutBuffer, advantages: &[f64], returns: &[f64], cfg: &PpoConfig,
@@ -321,7 +321,11 @@ fn ppo_update(
     let lr       = cfg.lr;
     let clip_eps = cfg.clip_epsilon;
     let epochs   = cfg.epochs.max(1);
+    let ent_coef = cfg.entropy_coef;
     let nf       = n as f64;
+
+    let mut actor_grad  = ActorGradBuffer::new(OBS_DIM, ACT_DIM);
+    let mut critic_grad = CriticGradBuffer::new(OBS_DIM);
 
     let mut total_ploss = 0.0f64;
     let mut total_vloss = 0.0f64;
@@ -330,6 +334,8 @@ fn ppo_update(
     let mut total_kl    = 0.0f64;
 
     for _epoch in 0..epochs {
+        actor_grad.reset();
+        critic_grad.reset();
         let (mut ep, mut ev, mut ee, mut ec, mut ek) = (0.0, 0.0, 0.0, 0.0, 0.0);
 
         for i in 0..n {
@@ -353,13 +359,13 @@ fn ppo_update(
             let adv     = advantages[i];
             let surr1   = ratio * adv;
             let surr2   = clipped * adv;
-            let use_clipped = surr2 < surr1;
+            let is_clip = surr2 < surr1;
             ep += -surr1.min(surr2);
-            ec += if use_clipped { 1.0 } else { 0.0 };
+            ec += if is_clip { 1.0 } else { 0.0 };
             ek += slices.log_probs[i] - new_lp;
             ee += ent;
 
-            let d_lp = if !use_clipped { -ratio * adv / nf } else { 0.0 };
+            let d_lp = if !is_clip { -ratio * adv } else { 0.0 };
 
             let mut d_mean    = Array1::zeros(ACT_DIM);
             let mut d_log_std = Array1::zeros(ACT_DIM);
@@ -368,15 +374,16 @@ fn ppo_update(
                 let z = (action[j] - cache.mean[j]) / s;
                 d_mean[j]    = d_lp * (z / s);
                 d_log_std[j] = d_lp * (z * z - 1.0);
+                d_log_std[j] -= ent_coef;
             }
-            let entropy_coef = 0.01;
-            for j in 0..ACT_DIM { d_log_std[j] -= entropy_coef / nf; }
 
-            actor.backward_sgd(&cache, &d_mean, &d_log_std, lr);
-
-            let v = critic.update_sgd(&obs_arr, returns[i], lr / nf);
+            actor.accumulate_grad(&cache, &d_mean, &d_log_std, &mut actor_grad);
+            let v = critic.accumulate_grad(&obs_arr, returns[i], &mut critic_grad);
             ev += (v - returns[i]).powi(2);
         }
+
+        actor.apply_grad(&mut actor_grad, nf, lr);
+        critic.apply_grad(&mut critic_grad, nf, lr);
 
         total_ploss = ep / nf;
         total_vloss = ev / nf;
