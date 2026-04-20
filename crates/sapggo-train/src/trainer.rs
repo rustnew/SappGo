@@ -10,7 +10,9 @@ use sapggo_agent::{
     compute_gae, normalize_advantages,
 };
 use sapggo_curriculum::CurriculumManager;
-use sapggo_env::{SapggoEnv, ACT_DIM, OBS_DIM};
+use sapggo_env::{ACT_DIM, OBS_DIM};
+
+use crate::vec_env::VecEnv;
 
 use crate::checkpoint;
 use crate::config::TrainConfig;
@@ -20,7 +22,7 @@ use crate::logger::TrainingLogger;
 /// Main training loop orchestrating environment interaction, PPO updates,
 /// curriculum progression, logging, and checkpointing.
 pub struct Trainer {
-    env:          SapggoEnv,
+    vec_env:      VecEnv,
     actor:        MlpActor,
     critic:       MlpCritic,
     curriculum:   CurriculumManager,
@@ -40,7 +42,8 @@ pub struct Trainer {
 impl Trainer {
     /// Initializes the trainer from a configuration.
     pub fn new(config: TrainConfig) -> anyhow::Result<Self> {
-        let env = SapggoEnv::new(&config.model_path, config.seed)?;
+        let num_envs = config.num_envs.max(1);
+        let vec_env = VecEnv::new(&config.model_path, config.seed, num_envs)?;
 
         let mut rng = StdRng::seed_from_u64(config.seed);
         let actor  = MlpActor::new(OBS_DIM, ACT_DIM, &mut rng);
@@ -53,7 +56,7 @@ impl Trainer {
         let ppo_config = config.to_ppo_config();
 
         Ok(Self {
-            env,
+            vec_env,
             actor,
             critic,
             curriculum:   CurriculumManager::new(),
@@ -72,7 +75,6 @@ impl Trainer {
 
     /// Runs the full training loop until `total_steps` is reached.
     pub fn run(&mut self) -> anyhow::Result<()> {
-        let mut obs = self.env.reset();
 
         tracing::info!(
             total_steps = self.config.total_steps,
@@ -81,8 +83,8 @@ impl Trainer {
         );
 
         while self.global_step < self.config.total_steps {
-            // 1. Collect rollout
-            let rollout = self.collect_rollout(&mut obs)?;
+            // 1. Collect rollout using VecEnv
+            let rollout = self.collect_rollout()?;
             self.global_step += rollout.len() as u64;
 
             // 2. Compute advantages
@@ -138,7 +140,7 @@ impl Trainer {
             best_reward  = format!("{:.2}", self.best_reward),
             best_episode = self.best_episode,
             path         = %final_path.display(),
-            "Training complete — best params saved in checkpoints/best_actor.json",
+            "Training complete — best params saved in checkpoints/best_actor.bin",
         );
 
         Ok(())
@@ -150,96 +152,105 @@ impl Trainer {
     /// the episode is logged to `episodes.csv` and the agent restarts
     /// instantly. If a new best reward is achieved, the actor weights
     /// are saved as `best_actor.json`.
-    fn collect_rollout(&mut self, obs: &mut Array1<f64>) -> anyhow::Result<RolloutBuffer> {
+    fn collect_rollout(&mut self) -> anyhow::Result<RolloutBuffer> {
         let mut buffer = RolloutBuffer::new(self.config.rollout_steps);
 
         while !buffer.is_full() {
-            // Normalize observation for the policy
-            let obs_vec = obs.to_vec();
-            self.normalizer.update(&obs_vec);
-            let norm_obs = self.normalizer.normalize(&obs_vec);
+            // Collect actions for all environments
+            let observations = self.vec_env.observations();
+            let n = observations.len();
+            let mut actions   = Vec::with_capacity(n);
+            let mut log_probs = Vec::with_capacity(n);
+            let mut values    = Vec::with_capacity(n);
+            let mut obs_vecs  = Vec::with_capacity(n);
 
-            // Forward pass through actor (stochastic) and critic
-            let (action, log_prob, _) = self.actor.act_stochastic(&norm_obs);
-            let value = self.critic.forward(&Array1::from(norm_obs.clone()));
+            for obs in observations {
+                let obs_vec = obs.to_vec();
+                self.normalizer.update(&obs_vec);
+                let norm_obs = self.normalizer.normalize(&obs_vec);
+                let (action, log_prob, _) = self.actor.act_stochastic(&norm_obs);
+                let value = self.critic.forward(&Array1::from(norm_obs));
+                actions.push(action);
+                log_probs.push(log_prob);
+                values.push(value);
+                obs_vecs.push(obs_vec);
+            }
 
-            let result = self.env.step(&action)?;
+            // Step all environments in parallel
+            let transitions = self.vec_env.step_all(&actions)?;
 
-            buffer.push(Transition {
-                observation: obs_vec,
-                action,
-                log_prob,
-                value,
-                reward: result.reward,
-                done:   result.done,
-            });
+            for (i, tr) in transitions.into_iter().enumerate() {
+                if buffer.is_full() { break; }
 
-            if result.done {
-                // ── Log every single episode ──
-                self.episode += 1;
-                let info = result.info;
-                let is_best = info.total_reward > self.best_reward;
-                if is_best {
-                    self.best_reward  = info.total_reward;
-                    self.best_episode = self.episode;
-                    // Save best actor weights
-                    let best_path = Path::new(&self.config.checkpoint_dir).join("best_actor.json");
-                    let _ = checkpoint::save_checkpoint(&self.actor, &best_path);
-                    let best_critic_path = Path::new(&self.config.checkpoint_dir).join("best_critic.json");
-                    let _ = checkpoint::save_checkpoint(&self.critic, &best_critic_path);
-                }
+                buffer.push(Transition {
+                    observation: obs_vecs[i].clone(),
+                    action:     actions[i].clone(),
+                    log_prob:   log_probs[i],
+                    value:      values[i],
+                    reward:     tr.reward,
+                    done:       tr.done,
+                });
 
-                self.episode_log.log_episode(
-                    self.episode,
-                    self.global_step + buffer.len() as u64,
-                    info.steps,
-                    info.total_reward,
-                    info.distance_m,
-                    info.load_dropped,
-                    info.robot_fallen,
-                    self.best_reward,
-                    is_best,
-                    self.curriculum.stage.name(),
-                );
+                if let Some(ep_result) = tr.episode {
+                    self.episode += 1;
+                    let is_best = ep_result.total_reward > self.best_reward;
+                    if is_best {
+                        self.best_reward  = ep_result.total_reward;
+                        self.best_episode = self.episode;
+                        let best_path = Path::new(&self.config.checkpoint_dir).join("best_actor.bin");
+                        let _ = checkpoint::save_checkpoint(&self.actor, &best_path);
+                        let best_critic_path = Path::new(&self.config.checkpoint_dir).join("best_critic.bin");
+                        let _ = checkpoint::save_checkpoint(&self.critic, &best_critic_path);
+                    }
 
-                // Print every episode to terminal
-                let status = if info.load_dropped {
-                    "DROPPED"
-                } else if info.robot_fallen {
-                    "FALLEN"
-                } else {
-                    "TIMEOUT"
-                };
-                tracing::info!(
-                    ep      = self.episode,
-                    status  = status,
-                    steps   = info.steps,
-                    reward  = format!("{:.2}", info.total_reward),
-                    dist    = format!("{:.2}m", info.distance_m),
-                    best    = format!("{:.2}", self.best_reward),
-                    best_ep = self.best_episode,
-                    "Episode done → instant restart",
-                );
-
-                // Curriculum check
-                if let Some(stage) = self.curriculum.on_episode_end(info.total_reward) {
-                    tracing::info!(
-                        new_stage = stage.name(),
-                        episode   = self.episode,
-                        "Curriculum promotion!",
+                    self.episode_log.log_episode(
+                        self.episode,
+                        self.global_step + buffer.len() as u64,
+                        ep_result.steps,
+                        ep_result.total_reward,
+                        ep_result.distance_m,
+                        ep_result.load_dropped,
+                        ep_result.robot_fallen,
+                        self.best_reward,
+                        is_best,
+                        self.curriculum.stage.name(),
                     );
-                    self.env.set_params(self.curriculum.current_params())?;
-                }
 
-                // Flush episode log every 50 episodes
-                if self.episode % 50 == 0 {
-                    self.episode_log.flush();
-                }
+                    let status = if ep_result.load_dropped {
+                        "DROPPED"
+                    } else if ep_result.robot_fallen {
+                        "FALLEN"
+                    } else if ep_result.stuck {
+                        "STUCK"
+                    } else {
+                        "TIMEOUT"
+                    };
+                    tracing::info!(
+                        ep      = self.episode,
+                        status  = status,
+                        steps   = ep_result.steps,
+                        reward  = format!("{:.2}", ep_result.total_reward),
+                        dist    = format!("{:.2}m", ep_result.distance_m),
+                        best    = format!("{:.2}", self.best_reward),
+                        best_ep = self.best_episode,
+                        "Episode done → instant restart",
+                    );
 
-                // ── Instant restart ──
-                *obs = self.env.reset();
-            } else {
-                *obs = result.observation;
+                    if let Some(stage) = self.curriculum.on_episode_end_with_distance(
+                        ep_result.total_reward, ep_result.distance_m,
+                    ) {
+                        tracing::info!(
+                            new_stage = stage.name(),
+                            episode   = self.episode,
+                            "Curriculum promotion!",
+                        );
+                        self.vec_env.set_params_all(self.curriculum.current_params())?;
+                    }
+
+                    if self.episode % 50 == 0 {
+                        self.episode_log.flush();
+                    }
+                }
             }
         }
 

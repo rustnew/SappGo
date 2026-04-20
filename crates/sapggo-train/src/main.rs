@@ -9,6 +9,7 @@ mod config;
 mod episode_log;
 mod logger;
 mod trainer;
+mod vec_env;
 
 use config::TrainConfig;
 use trainer::Trainer;

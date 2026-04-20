@@ -7,10 +7,8 @@ use crate::robot::N_JOINTS;
 pub struct RewardWeights {
     /// Forward velocity tracking weight.
     pub vel:    f64,
-    /// Torso pitch penalty weight.
-    pub pitch:  f64,
-    /// Torso roll penalty weight.
-    pub roll:   f64,
+    /// Torso tilt penalty weight (combined pitch+roll via projection).
+    pub tilt:   f64,
     /// Torque energy penalty weight.
     pub energy: f64,
     /// Load x-offset penalty weight.
@@ -29,8 +27,7 @@ impl Default for RewardWeights {
     fn default() -> Self {
         Self {
             vel:    2.0,
-            pitch:  0.3,
-            roll:   0.2,
+            tilt:   0.5,
             energy: 0.001,
             load_x: 1.0,
             load_y: 1.0,
@@ -44,8 +41,7 @@ impl Default for RewardWeights {
 /// Snapshot of state variables needed for reward computation.
 pub struct RewardState {
     pub velocity_x:  f64,
-    pub torso_pitch: f64,
-    pub torso_roll:  f64,
+    pub tilt_angle:  f64,
     pub load_dx:     f64,
     pub load_dy:     f64,
     pub load_dz:     f64,
@@ -72,8 +68,7 @@ pub fn compute_reward(s: &RewardState, w: &RewardWeights) -> f64 {
     let z_drop = (-s.load_dz).max(0.0);
 
     w.vel    *  s.velocity_x
-  - w.pitch  *  s.torso_pitch.abs()
-  - w.roll   *  s.torso_roll.abs()
+  - w.tilt   *  s.tilt_angle
   - w.energy *  energy
   - w.load_x *  s.load_dx.abs()
   - w.load_y *  s.load_dy.abs()
@@ -89,4 +84,4 @@ pub const MILESTONE_BONUS: f64 = 25.0;
 pub const EPISODE_BONUS: f64 = 100.0;
 
 /// Penalty applied when the episode terminates due to failure.
-pub const TERMINATION_PENALTY: f64 = -10.0;
+pub const TERMINATION_PENALTY: f64 = -50.0;

@@ -52,6 +52,20 @@ impl CurriculumStage {
         }
     }
 
+    /// Minimum mean distance (m) required for promotion from this stage.
+    /// Only enforced for Walk+ stages; Stand and Balance return 0.
+    #[inline]
+    pub fn distance_threshold(&self) -> f64 {
+        match self {
+            Self::Stand    => 0.0,
+            Self::Balance  => 0.0,
+            Self::Walk     => 2.0,
+            Self::Distance => 5.0,
+            Self::Robust   => 10.0,
+            Self::Master   => f64::INFINITY,
+        }
+    }
+
     /// Returns the numeric index of this stage (0–5).
     #[inline]
     pub fn index(&self) -> usize {

@@ -1,0 +1,17 @@
+episode,global_step,steps,reward,distance_m,load_dropped,robot_fallen,best_reward,is_best,curriculum_stage
+1,250,250,237.7045,0.0000,false,false,237.7045,true,Stand
+2,500,250,236.8249,0.0000,false,false,237.7045,false,Stand
+3,750,250,235.9926,0.0000,false,false,237.7045,false,Stand
+4,1000,250,236.6313,0.0000,false,false,237.7045,false,Stand
+5,1250,250,236.5857,0.0000,false,false,237.7045,false,Stand
+6,1500,250,237.1746,0.0000,false,false,237.7045,false,Stand
+7,1750,250,236.7240,0.0000,false,false,237.7045,false,Stand
+8,2000,250,237.2274,0.0000,false,false,237.7045,false,Stand
+9,2250,250,236.3013,0.0000,false,false,237.7045,false,Stand
+10,2500,250,236.9444,0.0000,false,false,237.7045,false,Stand
+11,2750,250,236.6166,0.0000,false,false,237.7045,false,Stand
+12,3000,250,235.8436,0.0000,false,false,237.7045,false,Stand
+13,3250,250,236.7185,0.0000,false,false,237.7045,false,Stand
+14,3500,250,236.3513,0.0000,false,false,237.7045,false,Stand
+15,3750,250,236.9184,0.0000,false,false,237.7045,false,Stand
+16,4000,250,236.9501,0.0000,false,false,237.7045,false,Stand

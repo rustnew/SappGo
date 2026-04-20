@@ -41,6 +41,8 @@ pub struct TrainConfig {
     pub checkpoint_dir:      String,
     /// Directory for training logs.
     pub log_dir:             String,
+    /// Number of parallel environments for rollout collection.
+    pub num_envs:            usize,
 }
 
 impl Default for TrainConfig {
@@ -64,6 +66,7 @@ impl Default for TrainConfig {
             checkpoint_interval: 100_000,
             checkpoint_dir:      "checkpoints".into(),
             log_dir:             "runs".into(),
+            num_envs:            8,
         }
     }
 }

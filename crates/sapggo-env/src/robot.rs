@@ -3,18 +3,20 @@ pub const N_JOINTS: usize = 24;
 
 /// Observation vector dimensionality.
 ///
-/// Layout (92 dimensions):
+/// Layout (98 dimensions):
 ///   [0..24]  joint angles
 ///   [24..48] joint velocities
 ///   [48..52] torso quaternion
 ///   [52..55] torso gyro
-///   [55..58] foot L force (3)
-///   [58..61] foot R force (3)
-///   [61..64] load offset
-///   [64..67] load angular velocity
-///   [67..91] previous action
-///   [91]     target velocity
-pub const OBS_DIM: usize = 92;
+///   [55..58] torso accelerometer (3)
+///   [58..61] foot L force (3)
+///   [61..64] foot R force (3)
+///   [64..67] load offset
+///   [67..70] load angular velocity
+///   [70..73] load accelerometer (3)
+///   [73..97] previous action
+///   [97]     target velocity
+pub const OBS_DIM: usize = 98;
 
 /// Action vector dimensionality (one per actuated joint).
 pub const ACT_DIM: usize = 24;
@@ -53,7 +55,7 @@ pub const MAX_TORQUE: [f64; N_JOINTS] = [
 ];
 
 /// Action smoothing coefficient (low-pass filter alpha for previous value).
-pub const ACTION_SMOOTH_ALPHA: f64 = 0.8;
+pub const ACTION_SMOOTH_ALPHA: f64 = 0.6;
 
 /// Action smoothing coefficient (low-pass filter beta for new value).
-pub const ACTION_SMOOTH_BETA: f64 = 0.2;
+pub const ACTION_SMOOTH_BETA: f64 = 0.4;

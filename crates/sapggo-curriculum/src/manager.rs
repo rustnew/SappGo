@@ -11,6 +11,7 @@ pub struct CurriculumManager {
     pub stage:         CurriculumStage,
     pub episode_count: u64,
     recent_rewards:    VecDeque<f64>,
+    recent_distances:  VecDeque<f64>,
     window:            usize,
 }
 
@@ -21,6 +22,7 @@ impl CurriculumManager {
             stage:          CurriculumStage::Stand,
             episode_count:  0,
             recent_rewards: VecDeque::with_capacity(51),
+            recent_distances: VecDeque::with_capacity(51),
             window:         50,
         }
     }
@@ -31,19 +33,30 @@ impl CurriculumManager {
             stage:          CurriculumStage::Stand,
             episode_count:  0,
             recent_rewards: VecDeque::with_capacity(window + 1),
+            recent_distances: VecDeque::with_capacity(window + 1),
             window,
         }
     }
 
-    /// Call at the end of each episode with the total episode reward.
-    ///
-    /// Returns `Some(new_stage)` if promotion occurred, `None` otherwise.
+    /// Call at the end of each episode with reward only (distance defaults to 0).
     pub fn on_episode_end(&mut self, reward: f64) -> Option<CurriculumStage> {
+        self.on_episode_end_with_distance(reward, 0.0)
+    }
+
+    /// Call at the end of each episode with reward and distance walked.
+    ///
+    /// For Walk+ stages, promotion also requires meeting a minimum distance threshold.
+    /// Returns `Some(new_stage)` if promotion occurred, `None` otherwise.
+    pub fn on_episode_end_with_distance(&mut self, reward: f64, distance_m: f64) -> Option<CurriculumStage> {
         self.episode_count += 1;
         self.recent_rewards.push_back(reward);
+        self.recent_distances.push_back(distance_m);
 
         if self.recent_rewards.len() > self.window {
             self.recent_rewards.pop_front();
+        }
+        if self.recent_distances.len() > self.window {
+            self.recent_distances.pop_front();
         }
 
         if self.recent_rewards.len() < self.window {
@@ -53,17 +66,28 @@ impl CurriculumManager {
         let sum: f64 = self.recent_rewards.iter().sum();
         let mean = sum / self.window as f64;
 
-        if mean >= self.stage.promotion_threshold() {
+        let dist_sum: f64 = self.recent_distances.iter().sum();
+        let mean_dist = dist_sum / self.window as f64;
+
+        // Check distance requirement for Walk+ stages
+        let dist_ok = match self.stage {
+            CurriculumStage::Stand | CurriculumStage::Balance => true, // no distance requirement
+            _ => mean_dist >= self.stage.distance_threshold(),
+        };
+
+        if mean >= self.stage.promotion_threshold() && dist_ok {
             if let Some(next) = self.stage.next() {
                 tracing::info!(
                     from        = self.stage.name(),
                     to          = next.name(),
                     mean_reward = mean,
+                    mean_dist   = format!("{:.2}", mean_dist),
                     episode     = self.episode_count,
                     "Curriculum promoted",
                 );
                 self.stage = next;
                 self.recent_rewards.clear();
+                self.recent_distances.clear();
                 return Some(self.stage);
             }
         }

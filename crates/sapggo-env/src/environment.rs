@@ -21,6 +21,7 @@ pub struct StepInfo {
     pub distance_m:   f64,
     pub load_dropped: bool,
     pub robot_fallen: bool,
+    pub stuck:        bool,
     pub steps:        u64,
     pub total_reward: f64,
 }
@@ -51,18 +52,26 @@ pub struct SapggoEnv {
     total_reward:   f64,
     last_milestone: u64,
     last_info:      Option<StepInfo>,
+    /// Distance at (current_step - STUCK_WINDOW) for stuck detection.
+    distance_at_window_start: f64,
     rng:            StdRng,
 }
 
 impl SapggoEnv {
-    /// Number of physics sub-steps per control step (10 × 2 ms = 20 ms).
-    pub const SIM_STEPS: usize = 10;
+    /// Number of physics sub-steps per control step (4 × 5 ms = 20 ms).
+    pub const SIM_STEPS: usize = 4;
 
     /// Passive settling steps at episode reset.
     pub const PASSIVE_STEPS: usize = 200;
 
     /// Default maximum steps per episode (overridden by curriculum).
     pub const DEFAULT_MAX_STEPS: u64 = 1000;
+
+    /// Number of steps to look back for stuck detection.
+    pub const STUCK_WINDOW: u64 = 100;
+
+    /// Minimum forward progress (m) required in STUCK_WINDOW steps to avoid termination.
+    pub const STUCK_MIN_PROGRESS: f64 = 0.1;
 
     /// Creates a new environment from a MuJoCo XML model path.
     pub fn new(model_path: &str, seed: u64) -> EnvResult<Self> {
@@ -85,6 +94,7 @@ impl SapggoEnv {
             total_reward:   0.0,
             last_milestone: 0,
             last_info:      None,
+            distance_at_window_start: 0.0,
             rng:            StdRng::seed_from_u64(seed),
         })
     }
@@ -130,6 +140,7 @@ impl SapggoEnv {
         self.total_reward   = 0.0;
         self.last_milestone = 0;
         self.last_info      = None;
+        self.distance_at_window_start = 0.0;
 
         sensor::extract_observation(
             &self.sim,
@@ -181,7 +192,23 @@ impl SapggoEnv {
         let robot_fallen = self.robot_is_fallen();
         let max_steps    = if self.params.max_steps > 0 { self.params.max_steps } else { Self::DEFAULT_MAX_STEPS };
         let timeout      = self.steps >= max_steps;
-        let done         = load_dropped || robot_fallen || timeout;
+
+        // Stuck detection: only active when target_velocity > 0 (Walk+ stages)
+        let stuck = self.params.target_velocity > 0.0
+            && self.steps >= Self::STUCK_WINDOW
+            && (self.distance_m - self.distance_at_window_start) < Self::STUCK_MIN_PROGRESS;
+
+        // Update rolling window tracker
+        if self.steps >= Self::STUCK_WINDOW {
+            // Approximate: update window start distance every step
+            // The actual logic: we record distance at step 0, check at step 100
+            // Then record distance at step 100, check at step 200, etc.
+            if self.steps % Self::STUCK_WINDOW == 0 {
+                self.distance_at_window_start = self.distance_m;
+            }
+        }
+
+        let done = load_dropped || robot_fallen || timeout || stuck;
 
         // Compute reward
         let rs    = self.build_reward_state(x_after - x_before, action);
@@ -195,7 +222,7 @@ impl SapggoEnv {
         }
 
         // Termination penalty
-        if done && (load_dropped || robot_fallen) {
+        if done && (load_dropped || robot_fallen || stuck) {
             r += reward::TERMINATION_PENALTY;
         }
 
@@ -219,6 +246,7 @@ impl SapggoEnv {
             distance_m:   self.distance_m,
             load_dropped,
             robot_fallen,
+            stuck,
             steps:        self.steps,
             total_reward: self.total_reward,
         };
@@ -267,16 +295,14 @@ impl SapggoEnv {
     fn build_reward_state(&self, delta_x: f64, action: &[f64]) -> RewardState {
         let tid = self.idx.torso_body_id;
 
-        // Extract torso quaternion components
-        let qw = self.sim.body_xquat(tid, 0);
+        // Projection-based tilt: rotate local [0,0,1] by torso quaternion,
+        // then measure angle from world vertical. Singularity-free.
         let qx = self.sim.body_xquat(tid, 1);
         let qy = self.sim.body_xquat(tid, 2);
-        let qz = self.sim.body_xquat(tid, 3);
 
-        // Extract pitch and roll from the torso quaternion (ZYX Euler convention)
-        let pitch = (2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0).asin();
-        let roll  = (2.0 * (qw * qx + qy * qz))
-            .atan2(1.0 - 2.0 * (qx.powi(2) + qy.powi(2)));
+        // up_world = q * [0,0,1] * q^-1  (z-component of rotated up vector)
+        let up_z = 1.0 - 2.0 * (qx * qx + qy * qy);
+        let tilt_angle = up_z.clamp(-1.0, 1.0).acos(); // 0 = upright, π = inverted
 
         let mut torques    = [0.0f64; N_JOINTS];
         let mut cur_action = [0.0f64; N_JOINTS];
@@ -288,12 +314,11 @@ impl SapggoEnv {
         let hid = self.idx.head_body_id;
         let lid = self.idx.load_body_id;
 
-        let dt = Self::SIM_STEPS as f64 * 0.002;
+        let dt = Self::SIM_STEPS as f64 * 0.005;
 
         RewardState {
             velocity_x:  delta_x / dt,
-            torso_pitch: pitch,
-            torso_roll:  roll,
+            tilt_angle,
             load_dx:     self.sim.body_xpos(lid, 0) - self.sim.body_xpos(hid, 0),
             load_dy:     self.sim.body_xpos(lid, 1) - self.sim.body_xpos(hid, 1),
             load_dz:     self.sim.body_xpos(lid, 2) - self.sim.body_xpos(hid, 2),
