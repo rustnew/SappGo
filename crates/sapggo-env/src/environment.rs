@@ -59,7 +59,7 @@ impl SapggoEnv {
     pub const SIM_STEPS: usize = 10;
 
     /// Passive settling steps at episode reset.
-    pub const PASSIVE_STEPS: usize = 50;
+    pub const PASSIVE_STEPS: usize = 200;
 
     /// Default maximum steps per episode (overridden by curriculum).
     pub const DEFAULT_MAX_STEPS: u64 = 1000;
@@ -179,7 +179,7 @@ impl SapggoEnv {
         // Check termination
         let load_dropped = load::is_dropped(&self.sim, &self.idx);
         let robot_fallen = self.robot_is_fallen();
-        let max_steps    = self.params.max_steps.max(Self::DEFAULT_MAX_STEPS);
+        let max_steps    = if self.params.max_steps > 0 { self.params.max_steps } else { Self::DEFAULT_MAX_STEPS };
         let timeout      = self.steps >= max_steps;
         let done         = load_dropped || robot_fallen || timeout;
 
@@ -237,7 +237,7 @@ impl SapggoEnv {
     /// Returns `true` if the torso has fallen below the safe height threshold.
     #[inline]
     fn robot_is_fallen(&self) -> bool {
-        self.sim.body_xpos(self.idx.torso_body_id, 2) < 0.6
+        self.sim.body_xpos(self.idx.torso_body_id, 2) < 0.5
     }
 
     /// Returns the simulation's qpos slice (for external visualization).
@@ -254,6 +254,10 @@ impl SapggoEnv {
 
     /// Applies per-episode domain randomization based on curriculum parameters.
     fn apply_domain_randomization(&mut self) {
+        // Apply gravity scale from curriculum (e.g. 0.5× for Stand stage)
+        let gz = -9.81 * self.params.gravity_scale;
+        self.sim.set_gravity_z(gz);
+
         let wind_max = self.params.wind_force_max;
         let wind = (2.0 * self.rng.gen::<f64>() - 1.0) * wind_max;
         self.sim.set_xfrc_applied(self.idx.load_body_id, 0, wind);
@@ -269,9 +273,9 @@ impl SapggoEnv {
         let qy = self.sim.body_xquat(tid, 2);
         let qz = self.sim.body_xquat(tid, 3);
 
-        // Extract pitch and roll from the torso quaternion
-        let pitch = (2.0 * (qy * qz + qw * qx)).asin();
-        let roll  = (2.0 * (qw * qy - qx * qz))
+        // Extract pitch and roll from the torso quaternion (ZYX Euler convention)
+        let pitch = (2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0).asin();
+        let roll  = (2.0 * (qw * qx + qy * qz))
             .atan2(1.0 - 2.0 * (qx.powi(2) + qy.powi(2)));
 
         let mut torques    = [0.0f64; N_JOINTS];

@@ -61,6 +61,11 @@ mod backend {
         pub fn step(&mut self) { unsafe { mj_step(self.m(), self.d_mut()); } }
         pub fn forward(&mut self) { unsafe { mj_forward(self.m(), self.d_mut()); } }
 
+        /// Sets the z-component of gravity (default: -9.81).
+        pub fn set_gravity_z(&mut self, gz: f64) {
+            unsafe { (*self.model_ptr).opt.gravity[2] = gz; }
+        }
+
         pub fn nbody(&self) -> usize { unsafe { (*self.m()).nbody as usize } }
         pub fn njnt(&self) -> usize { unsafe { (*self.m()).njnt as usize } }
         pub fn nq(&self) -> usize { unsafe { (*self.m()).nq as usize } }
@@ -164,8 +169,10 @@ mod backend {
             // Pre-populate name maps matching the SAPGGO XML model
             let body_map = vec![
                 ("world", 0), ("torso", 1), ("neck", 2), ("head", 3), ("load", 4),
-                ("upper_leg_L", 5), ("lower_leg_L", 6), ("foot_L", 7),
-                ("upper_leg_R", 8), ("lower_leg_R", 9), ("foot_R", 10),
+                ("upper_arm_L", 5), ("lower_arm_L", 6),
+                ("upper_arm_R", 7), ("lower_arm_R", 8),
+                ("upper_leg_L", 9), ("lower_leg_L", 10), ("foot_L", 11),
+                ("upper_leg_R", 12), ("lower_leg_R", 13), ("foot_R", 14),
             ];
             let joint_map: Vec<(&str, usize)> = crate::robot::JOINT_NAMES.iter()
                 .enumerate()
@@ -209,15 +216,28 @@ mod backend {
             }
             // Set default torso height
             if let Some(tid) = self.body_id("torso") {
-                self.xpos[tid * 3 + 2] = 1.35; // standing height
+                self.xpos[tid * 3 + 2] = 1.06; // standing height
             }
             if let Some(hid) = self.body_id("head") {
-                self.xpos[hid * 3 + 2] = 1.72;
+                self.xpos[hid * 3 + 2] = 1.43;
+            }
+            if let Some(lid) = self.body_id("load") {
+                self.xpos[lid * 3 + 2] = 1.65;
             }
         }
 
         pub fn step(&mut self)    { /* no-op in stub mode */ }
         pub fn forward(&mut self) { /* no-op in stub mode */ }
+
+        pub fn set_gravity_z(&mut self, _gz: f64) { /* no-op in stub mode */ }
+
+        pub fn nbody(&self) -> usize { self.body_map.len() }
+        pub fn njnt(&self) -> usize  { self.joint_map.len() }
+        pub fn nq(&self) -> usize    { self.qpos.len() }
+        pub fn nv(&self) -> usize    { self.qvel.len() }
+
+        pub fn qpos_slice(&self) -> &[f64] { &self.qpos }
+        pub fn qvel_slice(&self) -> &[f64] { &self.qvel }
 
         pub fn body_id(&self, name: &str) -> Option<usize> {
             self.body_map.iter().find(|(n, _)| *n == name).map(|(_, id)| *id)

@@ -51,7 +51,7 @@
     <geom name="floor" type="plane" size="50 50 0.1" material="ground_mat"/>
 
     <!-- ROOT: floating base (freejoint = 6 DOF) -->
-    <body name="root_body" pos="0 0 1.35">
+    <body name="root_body" pos="0 0 1.06">
       <freejoint name="root"/>
       <inertial pos="0 0 0" mass="0.01"
                 fullinertia="0.0001 0.0001 0.0001 0 0 0"/>
@@ -62,8 +62,8 @@
                range="-0.5 0.5" damping="2.0"/>
         <joint name="torso_lat" type="hinge" axis="0 1 0"
                range="-0.3 0.3" damping="2.0"/>
-        <inertial pos="0 0 0" mass="10.0"
-                  fullinertia="0.1 0.1 0.05 0 0 0"/>
+        <inertial pos="0 0 0" mass="25.0"
+                  fullinertia="0.25 0.25 0.12 0 0 0"/>
         <geom type="capsule" size="0.07 0.25" material="robot_body"/>
         <site name="torso_imu" pos="0 0 0" size="0.01"/>
 
@@ -91,6 +91,50 @@
 
           </body> <!-- head -->
         </body> <!-- neck -->
+        <!-- LEFT ARM -->
+        <body name="upper_arm_L" pos="-0.17 0 0.20">
+          <joint name="shoulder_flex_L" type="hinge" axis="1 0 0"
+                 range="-1.5 3.14" damping="0.5"/>
+          <joint name="shoulder_add_L"  type="hinge" axis="0 0 1"
+                 range="-0.5 1.5" damping="0.3"/>
+          <joint name="shoulder_rot_L"  type="hinge" axis="0 1 0"
+                 range="-1.0 1.0" damping="0.3"/>
+          <inertial pos="0 0 -0.14" mass="2.5"
+                    fullinertia="0.02 0.02 0.005 0 0 0"/>
+          <geom type="capsule" size="0.04 0.14" pos="0 0 -0.14"
+                material="robot_body"/>
+          <body name="lower_arm_L" pos="0 0 -0.30">
+            <joint name="elbow_flex_L" type="hinge" axis="1 0 0"
+                   range="-2.3 0.0" damping="0.3"/>
+            <inertial pos="0 0 -0.12" mass="1.5"
+                      fullinertia="0.01 0.01 0.003 0 0 0"/>
+            <geom type="capsule" size="0.035 0.12" pos="0 0 -0.12"
+                  material="robot_body"/>
+          </body>
+        </body>
+
+        <!-- RIGHT ARM -->
+        <body name="upper_arm_R" pos="0.17 0 0.20">
+          <joint name="shoulder_flex_R" type="hinge" axis="1 0 0"
+                 range="-1.5 3.14" damping="0.5"/>
+          <joint name="shoulder_add_R"  type="hinge" axis="0 0 1"
+                 range="-0.5 1.5" damping="0.3"/>
+          <joint name="shoulder_rot_R"  type="hinge" axis="0 1 0"
+                 range="-1.0 1.0" damping="0.3"/>
+          <inertial pos="0 0 -0.14" mass="2.5"
+                    fullinertia="0.02 0.02 0.005 0 0 0"/>
+          <geom type="capsule" size="0.04 0.14" pos="0 0 -0.14"
+                material="robot_body"/>
+          <body name="lower_arm_R" pos="0 0 -0.30">
+            <joint name="elbow_flex_R" type="hinge" axis="1 0 0"
+                   range="-2.3 0.0" damping="0.3"/>
+            <inertial pos="0 0 -0.12" mass="1.5"
+                      fullinertia="0.01 0.01 0.003 0 0 0"/>
+            <geom type="capsule" size="0.035 0.12" pos="0 0 -0.12"
+                  material="robot_body"/>
+          </body>
+        </body>
+
       </body> <!-- torso -->
 
       <!-- LEFT LEG -->
@@ -164,7 +208,7 @@
     </body> <!-- root_body -->
 
     <!-- LOAD: free body placed above the head at init (top-level for MuJoCo 3.x) -->
-    <body name="load" pos="0 0 1.94">
+    <body name="load" pos="0 0 1.65">
       <freejoint name="load_joint"/>
       <inertial pos="0 0 0" mass="5.0"
                 fullinertia="0.015 0.015 0.012 0 0 0"/>
@@ -210,6 +254,14 @@
     <motor name="torso_lat"    joint="torso_lat"    gear="120"/>
     <motor name="neck_tilt"    joint="neck_tilt"    gear="40"/>
     <motor name="neck_rot"     joint="neck_rot"     gear="40"/>
+    <motor name="shoulder_flex_L" joint="shoulder_flex_L" gear="80"/>
+    <motor name="shoulder_add_L"  joint="shoulder_add_L"  gear="80"/>
+    <motor name="shoulder_rot_L"  joint="shoulder_rot_L"  gear="60"/>
+    <motor name="elbow_flex_L"    joint="elbow_flex_L"    gear="60"/>
+    <motor name="shoulder_flex_R" joint="shoulder_flex_R" gear="80"/>
+    <motor name="shoulder_add_R"  joint="shoulder_add_R"  gear="80"/>
+    <motor name="shoulder_rot_R"  joint="shoulder_rot_R"  gear="60"/>
+    <motor name="elbow_flex_R"    joint="elbow_flex_R"    gear="60"/>
   </actuator>
 
 </mujoco>

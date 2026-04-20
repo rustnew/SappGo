@@ -6,19 +6,20 @@ use crate::noise::GaussianNoise;
 use crate::robot::{JOINT_NAMES, N_JOINTS, OBS_DIM};
 use crate::sim::Simulation;
 
-/// Observation vector layout (70 dimensions):
+/// Observation vector layout (92 dimensions):
 ///
 /// | Range     | Content                                    |
 /// |-----------|--------------------------------------------|
-/// | `[0..16]` | Joint angles                               |
-/// | `[16..32]`| Joint velocities                           |
-/// | `[32..36]`| Torso quaternion (w, x, y, z)              |
-/// | `[36..39]`| Torso angular velocity (gyro)              |
-/// | `[39..47]`| Foot contact forces (4 per foot)           |
-/// | `[47..50]`| Load offset from head center (dx, dy, dz)  |
-/// | `[50..53]`| Load angular velocity                      |
-/// | `[53..69]`| Previous action (16 joints)                |
-/// | `[69]`    | Target forward velocity (curriculum)       |
+/// | `[0..24]` | Joint angles                               |
+/// | `[24..48]`| Joint velocities                           |
+/// | `[48..52]`| Torso quaternion (w, x, y, z)              |
+/// | `[52..55]`| Torso angular velocity (gyro)              |
+/// | `[55..58]`| Foot L contact forces (3)                  |
+/// | `[58..61]`| Foot R contact forces (3)                  |
+/// | `[61..64]`| Load offset from head center (dx, dy, dz)  |
+/// | `[64..67]`| Load angular velocity                      |
+/// | `[67..91]`| Previous action (24 joints)                |
+/// | `[91]`    | Target forward velocity (curriculum)       |
 
 /// Cached sensor/body/joint indices to avoid repeated name lookups on every step.
 pub struct SensorIndex {
@@ -94,47 +95,47 @@ pub fn extract_observation(
 ) -> Array1<f64> {
     let mut obs = Array1::<f64>::zeros(OBS_DIM);
 
-    // Joint angles and velocities [0..32]
+    // Joint angles and velocities [0..48]
     for i in 0..N_JOINTS {
         obs[i]            = sim.qpos(idx.joint_qpos_addrs[i]) + noise.sample(rng);
         obs[N_JOINTS + i] = sim.qvel(idx.joint_qvel_addrs[i]) + noise.sample(rng);
     }
 
-    // Torso quaternion [32..36]
+    // Torso quaternion [48..52]
     for j in 0..4 {
-        obs[32 + j] = sim.body_xquat(idx.torso_body_id, j) + noise.sample(rng);
+        obs[48 + j] = sim.body_xquat(idx.torso_body_id, j) + noise.sample(rng);
     }
 
-    // Torso gyro [36..39]
+    // Torso gyro [52..55]
     for j in 0..3 {
-        obs[36 + j] = sim.sensordata(idx.torso_gyro_addr + j) + noise.sample(rng);
+        obs[52 + j] = sim.sensordata(idx.torso_gyro_addr + j) + noise.sample(rng);
     }
 
-    // Foot contact forces [39..47]
-    for j in 0..4 {
-        obs[39 + j] = sim.sensordata(idx.foot_l_addr + j) + noise.sample(rng);
-        obs[43 + j] = sim.sensordata(idx.foot_r_addr + j) + noise.sample(rng);
+    // Foot contact forces [55..61] (3 values per foot: fx, fy, fz)
+    for j in 0..3 {
+        obs[55 + j] = sim.sensordata(idx.foot_l_addr + j) + noise.sample(rng);
+        obs[58 + j] = sim.sensordata(idx.foot_r_addr + j) + noise.sample(rng);
     }
 
-    // Load offset from head center [47..50]
+    // Load offset from head center [61..64]
     for j in 0..3 {
         let head_j = sim.body_xpos(idx.head_body_id, j);
         let load_j = sim.body_xpos(idx.load_body_id, j);
-        obs[47 + j] = (load_j - head_j) + noise.sample(rng);
+        obs[61 + j] = (load_j - head_j) + noise.sample(rng);
     }
 
-    // Load angular velocity [50..53]
+    // Load angular velocity [64..67]
     for j in 0..3 {
-        obs[50 + j] = sim.sensordata(idx.load_gyro_addr + j) + noise.sample(rng);
+        obs[64 + j] = sim.sensordata(idx.load_gyro_addr + j) + noise.sample(rng);
     }
 
-    // Previous action [53..69]
+    // Previous action [67..91]
     for i in 0..N_JOINTS {
-        obs[53 + i] = prev_action[i];
+        obs[67 + i] = prev_action[i];
     }
 
-    // Target velocity [69]
-    obs[69] = target_vel;
+    // Target velocity [91]
+    obs[91] = target_vel;
 
     obs
 }
