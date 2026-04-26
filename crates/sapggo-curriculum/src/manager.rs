@@ -12,6 +12,7 @@ pub struct CurriculumManager {
     pub episode_count: u64,
     recent_rewards:    VecDeque<f64>,
     recent_distances:  VecDeque<f64>,
+    recent_tilts:    VecDeque<f64>,
     window:            usize,
 }
 
@@ -23,6 +24,7 @@ impl CurriculumManager {
             episode_count:  0,
             recent_rewards: VecDeque::with_capacity(51),
             recent_distances: VecDeque::with_capacity(51),
+            recent_tilts: VecDeque::with_capacity(51),
             window:         50,
         }
     }
@@ -34,29 +36,34 @@ impl CurriculumManager {
             episode_count:  0,
             recent_rewards: VecDeque::with_capacity(window + 1),
             recent_distances: VecDeque::with_capacity(window + 1),
+            recent_tilts: VecDeque::with_capacity(window + 1),
             window,
         }
     }
 
     /// Call at the end of each episode with reward only (distance defaults to 0).
     pub fn on_episode_end(&mut self, reward: f64) -> Option<CurriculumStage> {
-        self.on_episode_end_with_distance(reward, 0.0)
+        self.on_episode_end_with_distance(reward, 0.0, 0.0)
     }
 
     /// Call at the end of each episode with reward and distance walked.
     ///
     /// For Walk+ stages, promotion also requires meeting a minimum distance threshold.
     /// Returns `Some(new_stage)` if promotion occurred, `None` otherwise.
-    pub fn on_episode_end_with_distance(&mut self, reward: f64, distance_m: f64) -> Option<CurriculumStage> {
+    pub fn on_episode_end_with_distance(&mut self, reward: f64, distance_m: f64, tilt_angle: f64) -> Option<CurriculumStage> {
         self.episode_count += 1;
         self.recent_rewards.push_back(reward);
         self.recent_distances.push_back(distance_m);
+        self.recent_tilts.push_back(tilt_angle);
 
         if self.recent_rewards.len() > self.window {
             self.recent_rewards.pop_front();
         }
         if self.recent_distances.len() > self.window {
             self.recent_distances.pop_front();
+        }
+        if self.recent_tilts.len() > self.window {
+            self.recent_tilts.pop_front();
         }
 
         if self.recent_rewards.len() < self.window {
@@ -75,7 +82,15 @@ impl CurriculumManager {
             _ => mean_dist >= self.stage.distance_threshold(),
         };
 
-        if mean >= self.stage.promotion_threshold() && dist_ok {
+        // For Stand→Balance, also require good posture (low tilt angle)
+        let tilt_sum: f64 = self.recent_tilts.iter().sum();
+        let mean_tilt = tilt_sum / self.window as f64;
+        let posture_ok = match self.stage {
+            CurriculumStage::Stand => mean_dist >= 0.0 && mean_tilt < 0.2, // forward progress + upright posture
+            _ => true,
+        };
+
+        if mean >= self.stage.promotion_threshold() && dist_ok && posture_ok {
             if let Some(next) = self.stage.next() {
                 tracing::info!(
                     from        = self.stage.name(),

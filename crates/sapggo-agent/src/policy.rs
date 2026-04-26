@@ -313,7 +313,7 @@ impl MlpActor {
             fc3:     LinearLayer::new(256, 128, rng),
             ln3:     LayerNorm::new(128),
             mean:    LinearLayer::new(128, act_dim, rng),
-            log_std: Array1::from_elem(act_dim, -0.5),
+            log_std: Array1::from_elem(act_dim, 0.0),
             act_dim,
         }
     }

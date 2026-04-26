@@ -24,6 +24,7 @@ pub struct StepInfo {
     pub stuck:        bool,
     pub steps:        u64,
     pub total_reward: f64,
+    pub tilt_angle:   f64,
 }
 
 /// Result of a single environment step.
@@ -214,6 +215,12 @@ impl SapggoEnv {
         let rs    = self.build_reward_state(x_after - x_before, action);
         let mut r = reward::compute_reward(&rs, &self.weights);
 
+        // Inactivity (freeze) penalty: discourage staying completely passive
+        let action_norm = action.iter().map(|a| a.powi(2)).sum::<f64>().sqrt();
+        if action_norm < 0.05 {
+            r -= 0.1;
+        }
+
         // Milestone bonuses (every 10 m)
         let ms_now = (self.distance_m / 10.0).floor() as u64;
         if ms_now > self.last_milestone {
@@ -249,6 +256,7 @@ impl SapggoEnv {
             stuck,
             steps:        self.steps,
             total_reward: self.total_reward,
+            tilt_angle:   rs.tilt_angle,
         };
         self.last_info = Some(info.clone());
 
@@ -262,10 +270,10 @@ impl SapggoEnv {
 
     // ── Private helpers ──────────────────────────────────────────────
 
-    /// Returns `true` if the torso has fallen below the safe height threshold.
+    /// Returns `true` if torso has fallen below a safe height threshold.
     #[inline]
     fn robot_is_fallen(&self) -> bool {
-        self.sim.body_xpos(self.idx.torso_body_id, 2) < 0.5
+        self.sim.body_xpos(self.idx.torso_body_id, 2) < 0.75
     }
 
     /// Returns the simulation's qpos slice (for external visualization).

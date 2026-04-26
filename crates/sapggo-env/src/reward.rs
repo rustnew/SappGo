@@ -27,13 +27,13 @@ impl Default for RewardWeights {
     fn default() -> Self {
         Self {
             vel:    2.0,
-            tilt:   0.5,
-            energy: 0.001,
+            tilt:   2.0,
+            energy: 0.005,
             load_x: 1.0,
             load_y: 1.0,
             load_z: 2.0,
             jerk:   0.05,
-            alive:  1.0,
+            alive:  0.1,
         }
     }
 }

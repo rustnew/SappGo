@@ -63,7 +63,7 @@ impl CurriculumParams {
                 observation_noise:   0.0,
                 action_noise:        0.0,
                 target_velocity:     0.0,
-                max_steps:           250,
+                max_steps:           150,
             },
             CurriculumStage::Balance => Self {
                 load_mass_min:       2.0,

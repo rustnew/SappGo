@@ -237,7 +237,7 @@ impl Trainer {
                     );
 
                     if let Some(stage) = self.curriculum.on_episode_end_with_distance(
-                        ep_result.total_reward, ep_result.distance_m,
+                        ep_result.total_reward, ep_result.distance_m, ep_result.tilt_angle,
                     ) {
                         tracing::info!(
                             new_stage = stage.name(),

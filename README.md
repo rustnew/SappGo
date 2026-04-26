@@ -84,7 +84,7 @@ The agent is trained using **Proximal Policy Optimization (PPO)**, guided by a c
 
 Head-load balancing during bipedal locomotion is one of the most demanding motor control problems in robotics and AI. It uniquely combines:
 
-- **Multi-joint dynamic control** — 16+ joints must coordinate simultaneously while an unsecured object rests on the head.
+- **Multi-joint dynamic control** — 24 joints must coordinate simultaneously while an unsecured object rests on the head.
 - **Unstable free-body dynamics** — the load is not fixed; it can slide, tilt, and fall at any time.
 - **Delayed consequences** — a small imbalance may not cause failure for several steps, creating a hard temporal credit assignment problem.
 - **Multi-objective optimization** — walk fast, walk efficiently, stay upright, and keep the load centered, all at once.
@@ -170,10 +170,10 @@ sapggo/
 
 ### 4.1 The Robot Model
 
-The agent is a 16-degree-of-freedom humanoid defined in MuJoCo XML. The skeleton includes legs (6 DoF each), a torso (2 DoF), and a neck (2 DoF) that allows subtle head adjustments for balance.
+The agent is a **24-degree-of-freedom** humanoid (~65 kg) defined in MuJoCo XML. The skeleton includes legs (6 DoF each), arms (4 DoF each), a torso (2 DoF), and a neck (2 DoF).
 
 ```
-Joint map (16 actuated degrees of freedom)
+Joint map (24 actuated degrees of freedom)
 ----------------------------------------------
 LEFT LEG           RIGHT LEG          TORSO/NECK
 hip_flex_L   [0]   hip_flex_R   [6]   torso_flex  [12]
@@ -182,8 +182,12 @@ hip_rot_L    [2]   hip_rot_R    [8]   neck_tilt   [14]
 knee_L       [3]   knee_R       [9]   neck_rot    [15]
 ankle_flex_L [4]   ankle_flex_R [10]
 ankle_inv_L  [5]   ankle_inv_R  [11]
+shoulder_flex_L  [16]   shoulder_flex_R  [20]
+shoulder_add_L   [17]   shoulder_add_R   [21]
+shoulder_rot_L   [18]   shoulder_rot_R   [22]
+elbow_flex_L     [19]   elbow_flex_R     [23]
 ----------------------------------------------
-Total: 16 actuated joints
+Total: 24 actuated joints
 ```
 
 ### 4.2 The Load
@@ -206,11 +210,12 @@ reset()
  |
  +-- 1. Reload MuJoCo model, zero all velocities
  +-- 2. Set robot to upright standing pose
- +-- 3. Place load on head (with small random offset)
- +-- 4. Run 50 passive simulation steps (0.1 s)
+ +-- 3. Apply domain randomization (gravity scale, wind)
+ +-- 4. Place load on head (with small random offset)
+ +-- 5. Run 200 passive simulation steps (0.4 s)
  |       -> load settles under gravity
  |       -> robot absorbs passive weight
- +-- 5. Return first observation (stable starting state)
+ +-- 6. Return first observation (stable starting state)
 ```
 
 This passive settling phase is critical. It ensures the agent always starts from a physically consistent state where the load is already resting, not falling.
@@ -241,37 +246,42 @@ During human observation (not used by the agent), the environment renders:
 
 ## 5. Observation and Action Spaces
 
-### 5.1 Observation Space (78 dimensions, continuous)
+### 5.1 Observation Space (98 dimensions, continuous)
 
-| Component | Dims | Source |
-|-----------|------|--------|
-| Joint angles | 16 | `data.qpos` (actuated joints only) |
-| Joint velocities | 16 | `data.qvel` |
-| Torso quaternion | 4 | `data.xquat[torso_body]` |
-| Torso angular velocity | 3 | Simulated gyroscope on torso |
-| Foot contact forces | 8 | 4 per foot: normal + 2 tangential + pressure |
-| Load position offset (dx, dy, dz) | 3 | Load center relative to head center |
-| Load angular velocity | 3 | `data.sensordata[load_gyro]` |
-| Previous action | 16 | Last applied torque command (normalized) |
-| Target velocity | 1 | Current curriculum forward speed target |
-| **Total** | **70** | (+ 8 auxiliary info fields in `info` dict) |
+| Component | Dims | Indices | Source |
+|-----------|------|---------|--------|
+| Joint angles | 24 | [0..24] | `data.qpos` (actuated joints only) |
+| Joint velocities | 24 | [24..48] | `data.qvel` |
+| Torso quaternion | 4 | [48..52] | `data.xquat[torso_body]` |
+| Torso angular velocity | 3 | [52..55] | Simulated gyroscope on torso |
+| Torso linear acceleration | 3 | [55..58] | Torso accelerometer |
+| Foot L contact forces | 3 | [58..61] | `foot_L_force` sensor (Fx, Fy, Fz) |
+| Foot R contact forces | 3 | [61..64] | `foot_R_force` sensor (Fx, Fy, Fz) |
+| Load position offset | 3 | [64..67] | Load center relative to head center |
+| Load angular velocity | 3 | [67..70] | `load_gyro` sensor |
+| Load linear acceleration | 3 | [70..73] | `load_acc` sensor |
+| Previous action | 24 | [73..97] | Last applied torque command (normalized) |
+| Target velocity | 1 | [97] | Current curriculum forward speed target |
+| **Total** | **98** | |
 
 Gaussian noise with sigma = 0–0.01 is added to all sensor readings during training for robustness.
 
-### 5.2 Action Space (16 dimensions, continuous, range [-1, 1])
+### 5.2 Action Space (24 dimensions, continuous, range [-1, 1])
 
 | Group | Count | Max Torque |
-|-------|-------|-----------|
+|-------|-------|----------|
 | Hips (3 DoF x 2 legs) | 6 | 150 Nm |
 | Knees (1 DoF x 2 legs) | 2 | 200 Nm |
 | Ankles (2 DoF x 2 legs) | 4 | 80 Nm |
 | Torso (2 DoF) | 2 | 120 Nm |
 | Neck (2 DoF) | 2 | 40 Nm |
+| Shoulders (3 DoF x 2 arms) | 6 | 60–80 Nm |
+| Elbows (1 DoF x 2 arms) | 2 | 60 Nm |
 
-Action smoothing is applied before sending to MuJoCo to prevent mechanical shock:
+Action smoothing (low-pass filter) is applied before sending to MuJoCo:
 
 ```
-torque_applied[t] = 0.8 * torque_applied[t-1]  +  0.2 * action[t] * max_torque[i]
+torque_applied[t] = 0.6 * torque_applied[t-1]  +  0.4 * action[t] * max_torque[i]
 ```
 
 ---
@@ -282,8 +292,7 @@ torque_applied[t] = 0.8 * torque_applied[t-1]  +  0.2 * action[t] * max_torque[i
 
 ```
 r(t) =   w_vel    * v_x                          (forward velocity)
-       - w_pitch  * |pitch_torso|                 (upright posture)
-       - w_roll   * |roll_torso|                  (lateral balance)
+       - w_tilt   * tilt_angle                    (projection-based upright posture)
        - w_energy * mean(torques^2)               (efficiency)
        - w_load_x * |delta_x_load|               (load x-alignment)
        - w_load_y * |delta_y_load|               (load y-alignment)
@@ -297,14 +306,13 @@ r(t) =   w_vel    * v_x                          (forward velocity)
 | Symbol | Weight | Rationale |
 |--------|--------|-----------|
 | `w_vel` | 2.0 | Primary objective — must walk forward |
-| `w_pitch` | 0.3 | Upright posture reduces energy loss |
-| `w_roll` | 0.2 | Lateral sway destabilizes the load |
+| `w_tilt` | 0.5 | Projection-based upright posture (singularity-free) |
 | `w_energy` | 0.001 | Penalize wasted torque without blocking movement |
 | `w_load_x` | 1.0 | Load must stay centered left-right |
 | `w_load_y` | 1.0 | Load must stay centered front-back |
 | `w_load_z` | 2.0 | Load dropping is heavily penalized |
 | `w_jerk` | 0.05 | Smooth actions protect joints and load |
-| `w_alive` | 0.1 | Small bonus just for surviving each step |
+| `w_alive` | 1.0 | Bonus just for surviving each step |
 
 ### 6.3 Sparse Milestones
 
@@ -318,7 +326,7 @@ A sparse bonus is awarded every time the agent reaches a new distance milestone 
 ### 6.4 Episode Termination Penalty
 
 ```
--50.0   when episode ends due to load drop or robot fall
+-50.0   when episode ends due to load drop, robot fall, or stuck detection
 ```
 
 ---
@@ -335,18 +343,18 @@ Proximal Policy Optimization is selected because:
 ### 7.2 Policy Network Architecture
 
 ```
-Input: observation vector (78 dimensions)
+Input: observation vector (98 dimensions)
          |
-    Linear(78 -> 256)
-    LayerNorm + Tanh
+    Linear(98 -> 256)  → LayerNorm → Tanh
          |
-    Linear(256 -> 256)
-    LayerNorm + Tanh
+    Linear(256 -> 256) → LayerNorm → Tanh
+         |
+    Linear(256 -> 128) → LayerNorm → Tanh
          |
     +----+----+
     |         |
   Actor    Critic
-  256->16  256->1
+  128->24  128->1
   + log_std  (value)
   (Gaussian  (no activation)
    policy)
@@ -359,8 +367,8 @@ Input: observation vector (78 dimensions)
 | Total training steps | 20,000,000 |
 | Steps per rollout | 4096 |
 | Minibatch size | 512 |
-| PPO update epochs | 10 |
-| Learning rate | 3e-4 (linear decay) |
+| PPO update epochs | 6 |
+| Learning rate | 0.003 |
 | Discount factor (gamma) | 0.99 |
 | GAE lambda | 0.95 |
 | PPO clip epsilon | 0.2 |
@@ -383,7 +391,7 @@ The curriculum is a critical component — without it, the agent almost always f
 | 4 | Robustness | Walk 500 m, wind + noise | 5–15 kg | Rough | Full |
 | 5 | Master | Walk 1 km, all conditions | 10–20 kg | All | Full |
 
-Stage promotion is triggered automatically when the mean reward over the last 50 episodes exceeds the stage threshold.
+Stage promotion is triggered automatically when the mean reward over the last 50 episodes exceeds the stage threshold **and** (for Walk+ stages) the mean distance exceeds a minimum distance threshold.
 
 ---
 
@@ -412,8 +420,8 @@ Between every episode, the following parameters are sampled randomly to force th
 | Language | Rust 1.85+ | Core environment, training |
 | Physics | MuJoCo 3.2+ | Rigid body simulation |
 | MuJoCo bindings | `mujoco-rs` | Rust access to MuJoCo |
-| RL algorithm | `rlkit` / `sb3-burn` | PPO implementation |
-| Neural networks | `Burn` 0.13+ | Policy and value network, GPU |
+| RL algorithm | Hand-rolled PPO | Custom batch gradient accumulation |
+| Neural networks | `ndarray` (manual) | MLP with LayerNorm, backprop from scratch |
 | Logging | `tracing` | Structured training logs |
 | Config | `toml` + `serde` | Hyperparameter files |
 | CLI | `clap` | Command-line interface |

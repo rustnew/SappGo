@@ -60,7 +60,7 @@ impl Default for TrainConfig {
             epochs:              10,
             minibatch_size:      512,
             value_coef:          0.5,
-            entropy_coef:        0.01,
+            entropy_coef:        0.02,
             max_grad_norm:       0.5,
             log_interval:        10,
             checkpoint_interval: 100_000,

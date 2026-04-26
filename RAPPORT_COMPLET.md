@@ -1,4 +1,4 @@
-# SAPGGO — Rapport Technique Complet
+# SAPGGO — Rapport Technique Complet (v2 — post mise à jour)
 
 > **SAPGGO** (Simulated Articulated Porter with Guided Gait Optimization)
 > Agent humanoïde articulé entraîné par renforcement pour porter une charge sur la tête tout en marchant.
@@ -20,7 +20,7 @@
 11. [Hyperparamètres PPO](#11-hyperparamètres-ppo)
 12. [Fichiers générés automatiquement](#12-fichiers-générés-automatiquement)
 13. [Commandes de lancement](#13-commandes-de-lancement)
-14. [Résumé des corrections appliquées](#14-résumé-des-corrections-appliquées)
+14. [Résumé des corrections et améliorations appliquées](#14-résumé-des-corrections-et-améliorations-appliquées)
 
 ---
 
@@ -39,9 +39,10 @@ SAPGGO est un système de **reinforcement learning** (apprentissage par renforce
 |-----------|-------------|
 | **Langage** | Rust (édition 2021) |
 | **Moteur physique** | MuJoCo 3.x via `mujoco-rs` |
-| **Algorithme RL** | PPO (Proximal Policy Optimization) |
-| **Réseau de neurones** | MLP 2 couches cachées (implémenté à la main avec `ndarray`) |
-| **Sérialisation** | `serde` + `serde_json` (checkpoints), `toml` (configs) |
+| **Algorithme RL** | PPO (Proximal Policy Optimization) — implémentation manuelle |
+| **Réseau de neurones** | MLP 3 couches cachées (256, 256, 128) + LayerNorm (`ndarray`) |
+| **Sérialisation** | `serde` + `bincode` (checkpoints binaires), `toml` (configs) |
+| **Parallélisme** | `rayon` — 8 environnements parallèles (VecEnv) |
 | **Logging** | `tracing` + `tracing-subscriber` |
 | **CLI** | `clap` (derive) |
 
@@ -73,10 +74,10 @@ Cargo.toml                  # Workspace root
 
 | Module | Rôle |
 |--------|------|
-| `robot.rs` | Constantes du robot : `N_JOINTS=24`, `OBS_DIM=92`, `ACT_DIM=24`, noms des joints, couples max |
+| `robot.rs` | Constantes du robot : `N_JOINTS=24`, `OBS_DIM=98`, `ACT_DIM=24`, noms des joints, couples max |
 | `sim.rs` | Abstraction MuJoCo avec double backend (réel + stub sans physique) |
 | `environment.rs` | Interface RL `reset()`/`step()`, lissage d'actions, randomisation de domaine |
-| `sensor.rs` | Extraction du vecteur d'observation 92-dim depuis la simulation |
+| `sensor.rs` | Extraction du vecteur d'observation 98-dim depuis la simulation |
 | `reward.rs` | Calcul de la récompense dense par pas + bonus/pénalités |
 | `load.rs` | Placement de la charge sur la tête et détection de chute |
 | `noise.rs` | Bruit gaussien pour randomisation des observations |
@@ -87,8 +88,8 @@ Cargo.toml                  # Workspace root
 
 | Module | Rôle |
 |--------|------|
-| `policy.rs` | `MlpActor` (politique gaussienne), `LinearLayer`, buffers de gradient, trait `Policy` |
-| `value.rs` | `MlpCritic` (fonction de valeur), accumulation de gradients |
+| `policy.rs` | `MlpActor` (politique gaussienne), `LinearLayer`, `LayerNorm`, buffers de gradient, trait `Policy` |
+| `value.rs` | `MlpCritic` (fonction de valeur 3 couches + LayerNorm), accumulation de gradients |
 | `ppo.rs` | `PpoConfig`, `compute_gae()`, `normalize_advantages()` |
 | `rollout.rs` | `RolloutBuffer` et `Transition` pour collecter les trajectoires |
 | `normalize.rs` | `RunningNormalizer` (Welford) pour normaliser les observations |
@@ -110,7 +111,8 @@ Cargo.toml                  # Workspace root
 | `trainer.rs` | Boucle principale : collecte → GAE → PPO update → logs → checkpoints |
 | `logger.rs` | `TrainingLogger` : CSV `metrics.csv` (créé automatiquement) |
 | `episode_log.rs` | `EpisodeLog` : CSV `episodes.csv` (créé automatiquement) |
-| `checkpoint.rs` | Sauvegarde/chargement JSON des poids |
+| `checkpoint.rs` | Sauvegarde/chargement bincode des poids |
+| `vec_env.rs` | `VecEnv` : environnements parallèles (rayon) pour collecte de rollouts |
 | `bin/visual_train.rs` | Entraînement avec visualisation 3D MuJoCo en temps réel |
 
 ### Crate `sapggo-eval` — Évaluation
@@ -130,11 +132,11 @@ Cargo.toml                  # Workspace root
 
 | Paramètre | Valeur |
 |-----------|--------|
-| Timestep | 0.002 s (2 ms) |
-| Intégrateur | RK4 |
+| Timestep | 0.005 s (5 ms) |
+| Intégrateur | implicitfast |
 | Gravité | (0, 0, -9.81) m/s² |
 | Modèle de contact | Cône elliptique |
-| Solveur | Newton, 50 itérations |
+| Solveur | Newton, 20 itérations |
 
 ### Anatomie du robot (24 joints articulés)
 
@@ -258,26 +260,27 @@ loop {
 2. **`apply_domain_randomization()`** — Applique la gravité scalée et le vent aléatoire.
 3. **`place_load_on_head()`** — Place la charge sur la tête avec offset XY aléatoire (±1.5 cm).
 4. **200 pas de simulation passifs** — La charge se stabilise naturellement sur la tête (0.4 s physique).
-5. **Retourne l'observation initiale** (92 dimensions).
+5. **Retourne l'observation initiale** (98 dimensions).
 
 ### Procédure `step(action)`
 
 1. **Lissage d'action** (filtre passe-bas) :
    ```
-   smoothed[i] = 0.8 × smoothed[i] + 0.2 × action[i] × MAX_TORQUE[i]
+   smoothed[i] = 0.6 × smoothed[i] + 0.4 × action[i] × MAX_TORQUE[i]
    clamped = clamp(smoothed, -MAX_TORQUE, +MAX_TORQUE)
    sim.set_ctrl(i, clamped)
    ```
-2. **10 pas de simulation physique** (= 20 ms de temps réel par step de contrôle).
+2. **4 pas de simulation physique** (= 20 ms de temps réel par step de contrôle).
 3. **Accumulation de la distance parcourue** (uniquement vers l'avant, `max(0)`).
 4. **Vérification de terminaison** :
    - **Charge tombée** : `load_z - head_z < -0.05 m`
    - **Robot tombé** : `torso_z < 0.5 m`
+   - **Bloqué** : `< 0.1 m` de progrès en 100 pas (Walk+ uniquement)
    - **Timeout** : `steps >= max_steps` (défini par le curriculum)
 5. **Calcul de la récompense dense** + bonus de jalons (tous les 10 m) + pénalité de terminaison.
-6. **Extraction de l'observation** (92 dimensions).
+6. **Extraction de l'observation** (98 dimensions).
 
-### Vecteur d'observation (92 dimensions)
+### Vecteur d'observation (98 dimensions)
 
 | Indices | Contenu | Dimensions |
 |---------|---------|-----------|
@@ -285,12 +288,14 @@ loop {
 | [24..48] | Vitesses articulaires | 24 |
 | [48..52] | Quaternion du torse (w, x, y, z) | 4 |
 | [52..55] | Gyroscope du torse (ωx, ωy, ωz) | 3 |
-| [55..58] | Forces de contact pied gauche (Fx, Fy, Fz) | 3 |
-| [58..61] | Forces de contact pied droit (Fx, Fy, Fz) | 3 |
-| [61..64] | Offset charge/tête (dx, dy, dz) | 3 |
-| [64..67] | Vitesse angulaire de la charge | 3 |
-| [67..91] | Action précédente | 24 |
-| [91] | Vitesse cible (curriculum) | 1 |
+| [55..58] | Accéléromètre du torse (ax, ay, az) | 3 |
+| [58..61] | Forces de contact pied gauche (Fx, Fy, Fz) | 3 |
+| [61..64] | Forces de contact pied droit (Fx, Fy, Fz) | 3 |
+| [64..67] | Offset charge/tête (dx, dy, dz) | 3 |
+| [67..70] | Vitesse angulaire de la charge | 3 |
+| [70..73] | Accéléromètre de la charge (ax, ay, az) | 3 |
+| [73..97] | Action précédente | 24 |
+| [97] | Vitesse cible (curriculum) | 1 |
 
 ### Randomisation de domaine
 
@@ -314,15 +319,18 @@ loop {
 ### Architecture du réseau Actor (MlpActor)
 
 ```
-Observation (92 dim)
+Observation (98 dim)
     │
     ▼
-Linear(92 → 256) + Tanh       ← Xavier uniform init
+Linear(98 → 256) → LayerNorm → Tanh
     │
     ▼
-Linear(256 → 256) + Tanh      ← Xavier uniform init
+Linear(256 → 256) → LayerNorm → Tanh
     │
-    ├──→ Linear(256 → 24)      → mean (μ)
+    ▼
+Linear(256 → 128) → LayerNorm → Tanh
+    │
+    ├──→ Linear(128 → 24)      → mean (μ)
     │
     └──→ log_std (vecteur appris, 24 dim, init = -0.5)
          clamp [-4.0, 0.0] → exp → std (σ)
@@ -341,16 +349,19 @@ log π(a|s) = Σ [-0.5 × ((a-μ)/σ)² - ln(σ) - 0.5 × ln(2π)]
 ### Architecture du réseau Critic (MlpCritic)
 
 ```
-Observation (92 dim)
+Observation (98 dim)
     │
     ▼
-Linear(92 → 256) + Tanh
+Linear(98 → 256) → LayerNorm → Tanh
     │
     ▼
-Linear(256 → 256) + Tanh
+Linear(256 → 256) → LayerNorm → Tanh
     │
     ▼
-Linear(256 → 1)              → V(s) (scalaire)
+Linear(256 → 128) → LayerNorm → Tanh
+    │
+    ▼
+Linear(128 → 1)              → V(s) (scalaire)
 ```
 
 ### Rétropropagation et accumulation de gradient
@@ -430,8 +441,9 @@ Le `CurriculumManager` maintient une **fenêtre glissante de 50 épisodes**. Qua
 ```
 Initialisation:
     1. Charger le modèle MuJoCo
-    2. Créer actor MLP (92 → 256 → 256 → 24)
-    3. Créer critic MLP (92 → 256 → 256 → 1)
+    2. Créer actor MLP (98 → 256 → 256 → 128 → 24) avec LayerNorm
+    3. Créer critic MLP (98 → 256 → 256 → 128 → 1) avec LayerNorm
+    3b. Créer VecEnv (8 environnements parallèles via rayon)
     4. Créer normalizer, curriculum manager
     5. Créer fichiers CSV (runs/metrics.csv, runs/episodes.csv)
     6. Créer dossier checkpoints/
@@ -463,8 +475,8 @@ Boucle principale (tant que global_step < total_steps):
     
     5. CHECKPOINT — Sauvegarder les poids tous les 100 000 pas
        - checkpoints/sapggo_step_{N}.bin
-       - checkpoints/best_actor.json (meilleur épisode)
-       - checkpoints/best_critic.json
+       - checkpoints/best_actor.bin (meilleur épisode)
+       - checkpoints/best_critic.bin
 ```
 
 ### Objectif PPO clippé
@@ -495,7 +507,7 @@ Encourage l'exploration en pénalisant les distributions trop concentrées.
 
 ### Processus
 
-1. Charge la politique depuis un checkpoint JSON.
+1. Charge la politique depuis un checkpoint bincode.
 2. Exécute N épisodes en mode **déterministe** (action = mean, pas d'exploration).
 3. Agrège les métriques :
    - **Distance moyenne** (m)
@@ -541,8 +553,7 @@ viewer.sync();       // Met à jour l'affichage
 
 ```
 r = w_vel   × velocity_x          (tracking de vitesse : +)
-  − w_pitch × |pitch|             (pénalité inclinaison avant : −)
-  − w_roll  × |roll|              (pénalité inclinaison latérale : −)
+  − w_tilt  × tilt_angle          (pénalité inclinaison par projection : −)
   − w_energy × mean(τ²)           (pénalité énergie : −)
   − w_load_x × |load_dx|          (pénalité offset X charge : −)
   − w_load_y × |load_dy|          (pénalité offset Y charge : −)
@@ -556,8 +567,7 @@ r = w_vel   × velocity_x          (tracking de vitesse : +)
 | Composante | Poids | Rôle |
 |-----------|-------|------|
 | `vel` | 2.0 | Encourage la marche vers l'avant |
-| `pitch` | 0.3 | Penalise l'inclinaison avant/arrière du torse |
-| `roll` | 0.2 | Penalise l'inclinaison latérale du torse |
+| `tilt` | 0.5 | Penalise l'inclinaison du torse (angle par projection, sans singularité) |
 | `energy` | 0.001 | Penalise les couples élevés (économie d'énergie) |
 | `load_x` | 1.0 | Penalise le décalage X de la charge |
 | `load_y` | 1.0 | Penalise le décalage Y de la charge |
@@ -565,12 +575,14 @@ r = w_vel   × velocity_x          (tracking de vitesse : +)
 | `jerk` | 0.05 | Penalise les changements brusques d'action |
 | `alive` | 1.0 | Bonus de survie par pas |
 
-### Extraction pitch/roll (convention ZYX Euler)
+### Calcul de l'inclinaison (projection-based tilt)
 
 ```
-pitch = asin(clamp(2(qw×qy − qz×qx), −1, 1))
-roll  = atan2(2(qw×qx + qy×qz), 1 − 2(qx² + qy²))
+up_z = 1 − 2(qx² + qy²)           # composante z du vecteur haut tourné par le quaternion du torse
+tilt_angle = acos(clamp(up_z, −1, 1))   # 0 = debout, π = inversé
 ```
+
+Cette méthode est **sans singularité** (pas de gimbal lock) contrairement à l'extraction Euler.
 
 ### Récompenses sparse
 
@@ -578,7 +590,7 @@ roll  = atan2(2(qw×qx + qy×qz), 1 − 2(qx² + qy²))
 |-----------|--------|
 | Jalon tous les 10 m | +25.0 |
 | Complétion 1 km | +100.0 |
-| Terminaison (chute/perte de charge) | −10.0 |
+| Terminaison (chute/perte/bloqué) | −50.0 |
 
 ---
 
@@ -603,8 +615,8 @@ roll  = atan2(2(qw×qx + qy×qz), 1 − 2(qx² + qy²))
 ### Lissage d'action
 
 ```
-alpha = 0.8  (poids de la commande précédente)
-beta  = 0.2  (poids de la nouvelle action)
+alpha = 0.6  (poids de la commande précédente)
+beta  = 0.4  (poids de la nouvelle action)
 smoothed[i] = alpha × smoothed[i] + beta × action[i] × MAX_TORQUE[i]
 ```
 
@@ -619,8 +631,8 @@ Tous les fichiers suivants sont **créés automatiquement au lancement de l'entr
 | `runs/metrics.csv` | `TrainingLogger::new()` | `tag,value,global_step` — métriques par rollout |
 | `runs/episodes.csv` | `EpisodeLog::new()` | `episode,global_step,steps,reward,distance_m,load_dropped,robot_fallen,best_reward,is_best,curriculum_stage` |
 | `checkpoints/` (dossier) | `ensure_checkpoint_dir()` | Créé si absent |
-| `checkpoints/best_actor.json` | Trainer, à chaque nouveau record | Poids du meilleur actor |
-| `checkpoints/best_critic.json` | Trainer, à chaque nouveau record | Poids du meilleur critic |
+| `checkpoints/best_actor.bin` | Trainer, à chaque nouveau record | Poids du meilleur actor (bincode) |
+| `checkpoints/best_critic.bin` | Trainer, à chaque nouveau record | Poids du meilleur critic (bincode) |
 | `checkpoints/sapggo_step_{N}.bin` | Trainer, tous les 100k pas | Checkpoint périodique |
 | `checkpoints/sapggo_final.bin` | Trainer, en fin d'entraînement | Checkpoint final |
 
@@ -629,7 +641,7 @@ Tous les fichiers suivants sont **créés automatiquement au lancement de l'entr
 - **`TrainingLogger::new(log_dir)`** : appelle `fs::create_dir_all(log_dir)` → crée `runs/` s'il n'existe pas, puis ouvre `metrics.csv` en mode append (et écrit l'en-tête CSV si le fichier est nouveau).
 - **`EpisodeLog::new(log_dir)`** : même logique, crée `episodes.csv` avec en-tête.
 - **`ensure_checkpoint_dir(dir)`** : appelle `fs::create_dir_all(dir)` pour `checkpoints/`.
-- Les fichiers JSON de checkpoint sont écrits par `save_checkpoint()` à chaque meilleur épisode et à intervalles réguliers.
+- Les fichiers bincode de checkpoint sont écrits par `save_checkpoint()` à chaque meilleur épisode et à intervalles réguliers.
 
 ---
 
@@ -660,7 +672,7 @@ cargo run --release --bin sapggo-eval -- --config configs/eval.toml
 cargo run --release --bin sapggo-train -- --config configs/train_default.toml --seed 123
 
 # Reprendre depuis un checkpoint
-cargo run --release --bin sapggo-train -- --config configs/train_default.toml --resume checkpoints/best_actor.json
+cargo run --release --bin sapggo-train -- --config configs/train_default.toml --resume checkpoints/best_actor.bin
 ```
 
 ### Vérification rapide (compilation seule)
@@ -671,15 +683,15 @@ cargo build --release
 
 ---
 
-## 14. Résumé des corrections appliquées
+## 14. Résumé des corrections et améliorations appliquées
 
-### Bugs critiques corrigés
+### Phase 1 — Bugs critiques corrigés
 
 | # | Bug | Impact | Correction |
 |---|-----|--------|-----------|
 | 1 | **Hauteur initiale trop élevée** (root z=1.35, pieds à 29 cm du sol) | Robot tombait à chaque épisode avant de pouvoir apprendre | root_body z: 1.35 → 1.06 |
 | 2 | **Overflow capteur pied** (lecture de 4 valeurs au lieu de 3) | Observations corrompues, apprentissage impossible | Boucle `0..4` → `0..3` |
-| 3 | **Pitch/roll inversés** dans la récompense | Pénalités de posture appliquées au mauvais angle | Formules corrigées (convention ZYX) |
+| 3 | **Pitch/roll inversés** dans la récompense | Pénalités de posture appliquées au mauvais angle | Remplacé par angle de tilt par projection |
 | 4 | **Pas de bras** dans le modèle humanoïde | Modèle irréaliste, pas de contrepoids pour l'équilibre | Ajout de 4 corps + 8 joints + 8 actuateurs |
 | 5 | **Masse trop légère** (~42 kg) | Dynamique irréaliste | Torso 10 → 25 kg (total ~65 kg) |
 | 6 | **`gravity_scale` jamais appliqué** | Randomisation de domaine incomplète | Ajout `set_gravity_z()` dans `apply_domain_randomization()` |
@@ -687,13 +699,35 @@ cargo build --release
 | 8 | **Seuil de chute** inadapté (0.6 m pour root à 1.06) | Détection de chute trop/pas assez sensible | Ajusté à 0.5 m |
 | 9 | **Pas de stabilisation passive** suffisante (50 steps) | Charge pas encore posée quand l'épisode commence | 50 → 200 pas (0.4 s physique) |
 
+### Phase 2 — Améliorations v2 (dernière mise à jour)
+
+| # | Amélioration | Détails | Fichiers modifiés |
+|---|-------------|---------|-------------------|
+| A1 | **Lissage d'action** α=0.6 | Filtre passe-bas : `smoothed = 0.6×old + 0.4×new` (avant: 0.8/0.2) | `environment.rs` |
+| A2 | **Pénalité de terminaison** = -50 | Pénalise fortement chute, perte de charge, et blocage | `environment.rs`, `reward.rs` |
+| A3 | **MuJoCo implicitfast** | Timestep 0.005s, intégrateur `implicitfast`, 20 itérations (plus rapide) | `robot_humanoid_load.xml` |
+| A4 | **Observation 98-dim** | Ajout accéléromètre torse (3) + accéléromètre charge (3) | `sensor.rs`, `robot.rs` |
+| A5 | **Tilt par projection** | Remplace Euler pitch/roll par angle de projection (sans gimbal lock) | `environment.rs`, `reward.rs` |
+| A6 | **Détection blocage** | Termine si < 0.1m de progrès en 100 pas (Walk+ uniquement) | `environment.rs` |
+| A7 | **Promotion par distance** | Curriculum Walk+ exige distance minimale en plus du seuil de reward | `manager.rs`, `stage.rs` |
+| A8 | **Réseau 3 couches + LN** | Architecture 256→256→128 avec LayerNorm après chaque couche | `policy.rs`, `value.rs` |
+| A9 | **Checkpoints bincode** | Remplacement JSON → bincode (10× plus compact, 5× plus rapide) | `checkpoint.rs` |
+| A10 | **VecEnv rayon** | 8 environnements parallèles pour collecte de rollouts | `vec_env.rs`, `trainer.rs` |
+
 ### Changements de dimensions
 
-| Constante | Avant | Après |
-|-----------|-------|-------|
-| `N_JOINTS` | 16 | 24 |
-| `ACT_DIM` | 16 | 24 |
-| `OBS_DIM` | 70 | 92 |
+| Constante | v0 | v1 | v2 (actuel) |
+|-----------|----|----|-------------|
+| `N_JOINTS` | 16 | 24 | 24 |
+| `ACT_DIM` | 16 | 24 | 24 |
+| `OBS_DIM` | 70 | 92 | **98** |
+| Couches cachées | 256, 256 | 256, 256 | **256, 256, 128 + LayerNorm** |
+| Format checkpoint | JSON | JSON | **bincode** |
+| Environnements parallèles | 1 | 1 | **8 (rayon)** |
+| Lissage action (α) | 0.8 | 0.8 | **0.6** |
+| Intégrateur MuJoCo | RK4 | RK4 | **implicitfast** |
+| Timestep | 0.002s | 0.002s | **0.005s** |
+| SIM_STEPS par action | 10 | 10 | **4** |
 
 ---
 
@@ -702,9 +736,29 @@ cargo build --release
 SAPGGO est un projet de reinforcement learning complet en Rust qui combine :
 
 - Un **modèle humanoïde réaliste** à 24 degrés de liberté (~65 kg) simulé dans MuJoCo.
-- Un **environnement RL** avec randomisation de domaine, lissage d'action et shaping de récompense.
-- Un **agent PPO** avec accumulation de gradient par batch, politique gaussienne et critique MLP.
-- Un **curriculum d'apprentissage** en 6 stades de difficulté croissante.
-- Un **pipeline de logging automatique** (CSV) et de checkpointing (JSON).
+- Un **environnement RL** avec randomisation de domaine, lissage d'action (α=0.6), détection de blocage, et shaping de récompense par projection.
+- Un **agent PPO** avec accumulation de gradient par batch, politique gaussienne et critique MLP à 3 couches + LayerNorm.
+- Un **curriculum d'apprentissage** en 6 stades avec promotion basée sur la récompense **et** la distance.
+- Un **VecEnv parallèle** (8 environnements via `rayon`) pour collecte de rollouts accélérée.
+- Un **pipeline de logging automatique** (CSV) et de checkpointing (bincode binaire compact).
+
+### Commandes de lancement
+
+```bash
+# Entraînement standard
+cargo run --release --bin sapggo-train -- --config configs/train_default.toml
+
+# Avec seed personnalisée
+cargo run --release --bin sapggo-train -- --config configs/train_default.toml --seed 123
+
+# Avec MuJoCo réel + visualisation 3D
+cargo run --release --bin sapggo-train --features visual -- --config configs/train_default.toml
+
+# Reprise depuis un checkpoint
+cargo run --release --bin sapggo-train -- --resume checkpoints/best_actor.bin
+
+# Évaluation
+cargo run --release --bin sapggo-eval -- --config configs/eval.toml
+```
 
 Tous les fichiers de sortie (CSV, checkpoints, dossiers) sont créés **automatiquement** au lancement de l'entraînement.

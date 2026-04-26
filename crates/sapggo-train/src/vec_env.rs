@@ -12,6 +12,7 @@ pub struct EpisodeResult {
     pub load_dropped: bool,
     pub robot_fallen: bool,
     pub stuck:        bool,
+    pub tilt_angle:   f64,
 }
 
 /// Collected transition from one step of one environment.
@@ -81,6 +82,7 @@ impl VecEnv {
                         load_dropped: info.load_dropped,
                         robot_fallen: info.robot_fallen,
                         stuck:        info.stuck,
+                        tilt_angle:   info.tilt_angle,
                     };
                     *obs = env.reset();
                     Some(ep)
